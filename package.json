@@ -1,0 +1,30 @@
+{
+  "name": "bokken",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plataforma pessoal de estudos baseada em perguntas e respostas com repetição espaçada e arquitetura offline-first",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=@bokken/frontend",
+    "dev:backend": "npm run dev --workspace=@bokken/backend",
+    "build:shared": "npm run build --workspace=@bokken/shared",
+    "build:backend": "npm run build --workspace=@bokken/backend",
+    "build:frontend": "npm run build --workspace=@bokken/frontend",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspace=@bokken/backend",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "keywords": [
+    "study",
+    "flashcards",
+    "spaced-repetition",
+    "offline-first",
+    "pwa"
+  ],
+  "author": "",
+  "license": "ISC"
+}

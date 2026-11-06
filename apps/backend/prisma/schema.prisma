@@ -1,0 +1,203 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  DISCURSIVE
+}
+
+enum DiscursiveAssessment {
+  CORRECT
+  INCORRECT
+}
+
+enum QuizMode {
+  SUBJECT
+  FOCUS
+  GENERAL_ALL
+  GENERAL_CUSTOM
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  name         String
+  timezone     String   @default("America/Sao_Paulo")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  foci             Focus[]
+  quizSessions     QuizSession[]
+  questionAttempts QuestionAttempt[]
+  srsProgresses    QuestionSRSProgress[]
+  dailyStudyLogs   DailyStudyLog[]
+
+  @@map("users")
+}
+
+model Focus {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  name        String
+  description String?
+  color       String?   @default("#1e3a8a")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjects Subject[]
+
+  @@index([userId, deletedAt])
+  @@index([userId, updatedAt])
+  @@map("foci")
+}
+
+model Subject {
+  id          String    @id @default(uuid()) @db.Uuid
+  focusId     String    @db.Uuid
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  focus     Focus      @relation(fields: [focusId], references: [id], onDelete: Restrict)
+  questions Question[]
+
+  @@index([focusId, deletedAt])
+  @@index([focusId, updatedAt])
+  @@map("subjects")
+}
+
+model Question {
+  id             String       @id @default(uuid()) @db.Uuid
+  subjectId      String       @db.Uuid
+  type           QuestionType
+  statement      String       @db.Text
+  explanation    String?      @db.Text
+  expectedAnswer String?      @db.Text
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  subject       Subject               @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  options       QuestionOption[]
+  attempts      QuestionAttempt[]
+  srsProgresses QuestionSRSProgress[]
+
+  @@index([subjectId, deletedAt])
+  @@index([subjectId, updatedAt])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String   @id @default(uuid()) @db.Uuid
+  questionId String   @db.Uuid
+  text       String   @db.Text
+  isCorrect  Boolean  @default(false)
+  orderIndex Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  question Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  attempts QuestionAttempt[]
+
+  @@index([questionId])
+  @@map("question_options")
+}
+
+model QuestionSRSProgress {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  questionId         String    @db.Uuid
+  repetitions        Int       @default(0)
+  consecutiveCorrect Int       @default(0)
+  totalAttempts      Int       @default(0)
+  totalCorrect       Int       @default(0)
+  totalIncorrect     Int       @default(0)
+  priorityScore      Float     @default(1.0)
+  lastAttemptAt      DateTime?
+  nextReviewAt       DateTime?
+  updatedAt          DateTime  @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, questionId])
+  @@index([userId, nextReviewAt])
+  @@index([userId, priorityScore])
+  @@map("question_srs_progress")
+}
+
+model QuizSession {
+  id               String            @id @default(uuid()) @db.Uuid
+  userId           String            @db.Uuid
+  mode             QuizMode
+  totalQuestions   Int               @default(0)
+  totalCorrect     Int               @default(0)
+  totalIncorrect   Int               @default(0)
+  durationSeconds  Int               @default(0)
+  startedAt        DateTime          @default(now())
+  finishedAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts QuestionAttempt[]
+
+  @@index([userId, startedAt])
+  @@map("quiz_sessions")
+}
+
+model QuestionAttempt {
+  id                   String                @id @default(uuid()) @db.Uuid
+  userId               String                @db.Uuid
+  questionId           String                @db.Uuid
+  quizSessionId        String?               @db.Uuid
+  isCorrect            Boolean
+  selectedOptionId     String?               @db.Uuid
+  discursiveAssessment DiscursiveAssessment?
+  timeSpentSeconds     Int                   @default(0)
+  clientStudyDate      String                @db.VarChar(10)
+  clientTimezone       String?               @db.VarChar(50)
+  statementSnapshot            String?               @db.Text
+  selectedOptionTextSnapshot   String?               @db.Text
+  expectedAnswerSnapshot       String?               @db.Text
+  clientCreatedAt      DateTime
+  syncedAt             DateTime              @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question       Question        @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  quizSession    QuizSession?    @relation(fields: [quizSessionId], references: [id], onDelete: SetNull)
+  selectedOption QuestionOption? @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, clientCreatedAt])
+  @@index([userId, clientStudyDate])
+  @@index([questionId])
+  @@index([quizSessionId])
+  @@map("question_attempts")
+}
+
+model DailyStudyLog {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  studyDate         DateTime @db.Date
+  questionsAnswered Int      @default(0)
+  correctCount      Int      @default(0)
+  incorrectCount    Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, studyDate])
+  @@index([userId, studyDate])
+  @@map("daily_study_logs")
+}

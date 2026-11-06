@@ -1,0 +1,27 @@
+{
+  "name": "@bokken/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tipos, esquemas Zod e constantes compartilhadas entre frontend e backend do Bokken Estudos",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "watch": "tsc -w"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
