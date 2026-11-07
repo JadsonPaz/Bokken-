@@ -6,7 +6,7 @@ import { QuestionService } from '../services/questionService.js';
 import { InMemoryFocusRepository } from '../repositories/focusRepository.js';
 import { InMemorySubjectRepository } from '../repositories/subjectRepository.js';
 import { InMemoryQuestionRepository } from '../repositories/questionRepository.js';
-import { QuestionType } from '@bokken/shared';
+import { QuestionType, createQuestionSnapshot, questionAttemptSchema } from '@bokken/shared';
 import { Focus } from '@prisma/client';
 
 // ---- Helper: constrói um objeto Focus compatível com o tipo Prisma ----
@@ -232,6 +232,22 @@ describe('Etapa 3 — Gestão de Conteúdos: Matérias', () => {
     assert.strictEqual(focusRaw.deletedAt, null, 'O foco permanece ativo');
   });
 
+  it('atualiza matéria preservando foco e campos não enviados', async () => {
+    const focusId = crypto.randomUUID();
+    addFocus(focusId, USER_A, 'Foco da matéria');
+    const subject = await subjectService.createSubject(USER_A, {
+      focusId,
+      name: 'Nome original',
+      description: 'Descrição preservada'
+    });
+
+    const updated = await subjectService.updateSubject(subject.id, USER_A, { name: 'Nome atualizado' });
+
+    assert.strictEqual(updated.name, 'Nome atualizado');
+    assert.strictEqual(updated.focusId, focusId);
+    assert.strictEqual(updated.description, 'Descrição preservada');
+  });
+
   it('12. Soft delete de matéria deve excluir em cascata suas perguntas', async () => {
     const focusId = crypto.randomUUID();
     addFocus(focusId, USER_A, 'Foco Cascata Matéria');
@@ -251,6 +267,14 @@ describe('Etapa 3 — Gestão de Conteúdos: Matérias', () => {
 
     assert.ok(questionsStore[0].deletedAt !== null, 'Pergunta 1 deve ser marcada como deletada');
     assert.ok(questionsStore[1].deletedAt !== null, 'Pergunta 2 deve ser marcada como deletada');
+  });
+
+  it('erros internos ao criar matéria permanecem erros internos, não 404', async () => {
+    subjectRepo.create = async () => { throw new Error('database unavailable'); };
+    await assert.rejects(
+      () => subjectService.createSubject(USER_A, { focusId: crypto.randomUUID(), name: 'Teste' }),
+      (error: Error) => error.message === 'database unavailable' && error.name === 'Error'
+    );
   });
 });
 
@@ -456,5 +480,82 @@ describe('Etapa 3 — Gestão de Conteúdos: Perguntas', () => {
 
     assert.strictEqual(updated.statement, 'Qual é a capital do Brasil?');
     assert.strictEqual(updated.options?.length, 2, 'Opções devem ser preservadas');
+  });
+
+  it('24. Snapshot preserva o enunciado e todas as alternativas da versão respondida após editar opções', async () => {
+    const original = await questionService.createQuestion(USER_A, {
+      subjectId,
+      type: QuestionType.MULTIPLE_CHOICE,
+      statement: 'Qual é a capital do Brasil?',
+      explanation: 'Considere a capital atual.',
+      options: [
+        { text: 'Rio de Janeiro', isCorrect: false },
+        { text: 'Brasília', isCorrect: true },
+        { text: 'São Paulo', isCorrect: false }
+      ]
+    });
+    const attemptSnapshot = createQuestionSnapshot(original);
+
+    const attemptBase = {
+      id: crypto.randomUUID(),
+      questionId: original.id,
+      isCorrect: true,
+      timeSpentSeconds: 12,
+      clientStudyDate: '2026-11-06',
+      clientCreatedAt: new Date().toISOString()
+    };
+    assert.strictEqual(questionAttemptSchema.safeParse(attemptBase).success, false, 'Tentativa sem contexto não deve ser aceita');
+    assert.strictEqual(questionAttemptSchema.safeParse({ ...attemptBase, questionSnapshot: attemptSnapshot }).success, true);
+
+    const edited = await questionService.updateQuestion(original.id, USER_A, {
+      statement: 'Qual é a capital do Brasil atualmente?',
+      options: [
+        { text: 'Brasília', isCorrect: true },
+        { text: 'Salvador', isCorrect: false }
+      ]
+    });
+
+    assert.deepStrictEqual(attemptSnapshot.options.map(option => option.text), [
+      'Rio de Janeiro', 'Brasília', 'São Paulo'
+    ]);
+    assert.strictEqual(attemptSnapshot.statement, 'Qual é a capital do Brasil?');
+    assert.strictEqual(edited.options?.length, 2);
+    assert.strictEqual(questionRepo.archivedOptions.length, 3, 'Alternativas antigas devem ser arquivadas, não apagadas');
+    assert.deepStrictEqual(questionRepo.archivedOptions.map(option => option.text), [
+      'Rio de Janeiro', 'Brasília', 'São Paulo'
+    ]);
+  });
+
+  it('25. Converter para discursiva arquiva alternativas anteriores', async () => {
+    const original = await questionService.createQuestion(USER_A, {
+      subjectId,
+      type: QuestionType.MULTIPLE_CHOICE,
+      statement: 'Qual alternativa?',
+      options: [
+        { text: 'A', isCorrect: true },
+        { text: 'B', isCorrect: false }
+      ]
+    });
+
+    const updated = await questionService.updateQuestion(original.id, USER_A, {
+      type: QuestionType.DISCURSIVE,
+      expectedAnswer: 'A'
+    });
+
+    assert.strictEqual(updated.options?.length, 0);
+    assert.strictEqual(questionRepo.archivedOptions.length, 2);
+  });
+
+  it('erros internos ao criar pergunta permanecem erros internos, não 404', async () => {
+    questionRepo.create = async () => { throw new Error('database unavailable'); };
+    await assert.rejects(
+      () => questionService.createQuestion(USER_A, {
+        subjectId,
+        type: QuestionType.DISCURSIVE,
+        statement: 'Pergunta válida',
+        expectedAnswer: 'Resposta'
+      }),
+      (error: Error) => error.message === 'database unavailable' && error.name === 'Error'
+    );
   });
 });

@@ -9,6 +9,7 @@ import { AuthController } from '../controllers/authController.js';
 import { createAuthRouter } from '../routes/auth.js';
 import express from 'express';
 import { errorHandler } from '../middlewares/errorHandler.js';
+import { parseEnvironment } from '../config/env.js';
 
 describe('Módulo de Autenticação — Bokken Estudos', () => {
   let userRepository: InMemoryUserRepository;
@@ -17,6 +18,18 @@ describe('Módulo de Autenticação — Bokken Estudos', () => {
   beforeEach(() => {
     userRepository = new InMemoryUserRepository();
     authService = new AuthService(userRepository);
+  });
+
+  it('exige ambiente explícito e usa configuração JWT isolada por ambiente', () => {
+    assert.throws(() => parseEnvironment({}), /NODE_ENV/);
+    assert.strictEqual(parseEnvironment({ NODE_ENV: 'development' }).JWT_SECRET, 'bokken_dev_secret_key_change_in_production');
+    assert.throws(() => parseEnvironment({ NODE_ENV: 'test' }), /JWT_SECRET/);
+    assert.strictEqual(parseEnvironment({ NODE_ENV: 'test', JWT_SECRET: 'isolated_test_jwt_secret_2026_only' }).JWT_SECRET, 'isolated_test_jwt_secret_2026_only');
+    assert.throws(() => parseEnvironment({ NODE_ENV: 'production' }), /JWT_SECRET/);
+    assert.throws(() => parseEnvironment({ NODE_ENV: 'production', JWT_SECRET: 'segredo-curto' }), /JWT_SECRET/);
+    assert.throws(() => parseEnvironment({ NODE_ENV: 'production', JWT_SECRET: 'a'.repeat(48) }), /JWT_SECRET/);
+    assert.throws(() => parseEnvironment({ NODE_ENV: 'production', JWT_SECRET: 'Example_random_production_secret_2026!x' }), /JWT_SECRET/);
+    assert.strictEqual(parseEnvironment({ NODE_ENV: 'production', JWT_SECRET: 'xY7$pL2!bV9@qW4#nT6^mK3&zR8*hf5%' }).JWT_SECRET, 'xY7$pL2!bV9@qW4#nT6^mK3&zR8*hf5%');
   });
 
   it('1. Deve realizar cadastro válido com sucesso e retornar usuário seguro e token', async () => {

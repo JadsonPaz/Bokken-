@@ -70,6 +70,7 @@ erDiagram
         text text
         boolean isCorrect
         int orderIndex
+        datetime retiredAt "Versão arquivada; alternativas históricas permanecem referenciáveis"
         datetime createdAt
         datetime updatedAt
     }
@@ -114,6 +115,7 @@ erDiagram
         int timeSpentSeconds
         string clientStudyDate "YYYY-MM-DD no fuso do aluno"
         string clientTimezone "Timezone do dispositivo"
+        json questionSnapshot "Enunciado, tipo, justificativa, gabarito e todas as alternativas apresentadas"
         datetime clientCreatedAt "Timestamp ISO UTC do dispositivo"
         datetime syncedAt "Timestamp de gravação no servidor"
     }
@@ -242,6 +244,7 @@ model QuestionOption {
   orderIndex Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  retiredAt  DateTime?
 
   question Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
   attempts QuestionAttempt[]
@@ -304,6 +307,10 @@ model QuestionAttempt {
   timeSpentSeconds     Int                   @default(0)
   clientStudyDate      String                @db.VarChar(10) // "YYYY-MM-DD" no fuso civil do aluno
   clientTimezone       String?               @db.VarChar(50) // "America/Sao_Paulo"
+  statementSnapshot    String?               @db.Text
+  selectedOptionTextSnapshot String?         @db.Text
+  expectedAnswerSnapshot String?             @db.Text
+  questionSnapshot     Json?                  @db.JsonB
   clientCreatedAt      DateTime
   syncedAt             DateTime              @default(now())
 
@@ -347,6 +354,8 @@ model DailyStudyLog {
   - O mesmo se aplica a `Question.subject` e `Subject.focus`, que utilizam `onDelete: Restrict`.
   - A exclusão de conteúdos é **100% lógica (Soft Delete via `deletedAt`)**. Ao excluir um Foco, Matéria ou Pergunta, apenas o campo `deletedAt` é preenchido.
   - As perguntas excluídas logicamente são excluídas das consultas de novos quizzes (`WHERE deletedAt IS NULL`), mas permanecem no banco para alimentar relatórios históricos, gráficos de aproveitamento acumulado e auditoria.
+  - Cada tentativa futura deve carregar `questionSnapshot`, contendo tipo, enunciado, justificativa, resposta esperada e **todas** as alternativas apresentadas (texto, ordem e indicação da correta). O snapshot é capturado no cliente ao responder, inclusive em modo offline.
+  - Ao editar alternativas, as linhas antigas recebem `retiredAt`; seus IDs e relações com tentativas permanecem intactos. A migração `20261106010000_preserve_question_attempt_context` apenas adiciona colunas anuláveis. Tentativas antigas não recebem snapshots fabricados porque não há como reconstruir com segurança versões anteriores do conteúdo.
   - O único `onDelete: Cascade` permitido é no nível do `User`: se o estudante solicitar a exclusão de sua conta integral (em conformidade com a LGPD), todos os seus dados pessoais são purgados em cascata.
 
 ### 3.2. Fuso Horário e Integridade de Ofensiva (`clientStudyDate` e `User.timezone`)

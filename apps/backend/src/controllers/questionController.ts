@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { QuestionService } from '../services/questionService.js';
 import { AppError } from '../utils/errors.js';
+import { parseContentUuid, parseQuestionListQuery } from '../utils/contentRequestValidation.js';
 
 export class QuestionController {
   constructor(private questionService: QuestionService = new QuestionService()) {}
@@ -8,10 +9,7 @@ export class QuestionController {
   list = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.user?.id) throw new AppError('Não autenticado', 401);
-      const subjectId = req.query.subjectId as string;
-      const search = req.query.search as string | undefined;
-      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+      const { subjectId, search, page, limit } = parseQuestionListQuery(req.query);
 
       const result = await this.questionService.listQuestions(subjectId, req.user.id, {
         search,
@@ -27,7 +25,7 @@ export class QuestionController {
   getById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.user?.id) throw new AppError('Não autenticado', 401);
-      const question = await this.questionService.getQuestion(req.params.id, req.user.id);
+      const question = await this.questionService.getQuestion(parseContentUuid(req.params.id), req.user.id);
       res.status(200).json({ question });
     } catch (err) {
       next(err);
@@ -47,7 +45,7 @@ export class QuestionController {
   update = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.user?.id) throw new AppError('Não autenticado', 401);
-      const question = await this.questionService.updateQuestion(req.params.id, req.user.id, req.body);
+      const question = await this.questionService.updateQuestion(parseContentUuid(req.params.id), req.user.id, req.body);
       res.status(200).json({ question });
     } catch (err) {
       next(err);
@@ -57,7 +55,7 @@ export class QuestionController {
   delete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.user?.id) throw new AppError('Não autenticado', 401);
-      await this.questionService.deleteQuestion(req.params.id, req.user.id);
+      await this.questionService.deleteQuestion(parseContentUuid(req.params.id), req.user.id);
       res.status(200).json({ message: 'Pergunta excluída com sucesso' });
     } catch (err) {
       next(err);

@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
-import { Subject, Focus } from '@prisma/client';
-import { SubjectWithCount } from '@bokken/shared';
+import { Subject as PrismaSubject } from '@prisma/client';
+import { Subject, SubjectWithCount } from '@bokken/shared';
+import { AppError } from '../utils/errors.js';
 
 export interface CreateSubjectData {
   focusId: string;
@@ -15,10 +16,23 @@ export interface UpdateSubjectData {
 
 export interface ISubjectRepository {
   findAllByFocusId(focusId: string, userId: string): Promise<SubjectWithCount[]>;
-  findById(id: string, userId: string): Promise<(Subject & { focus?: Focus; questionsCount?: number }) | null>;
+  findById(id: string, userId: string): Promise<SubjectWithCount | null>;
   create(data: CreateSubjectData, userId: string): Promise<Subject>;
   update(id: string, userId: string, data: UpdateSubjectData): Promise<Subject | null>;
   softDelete(id: string, userId: string): Promise<boolean>;
+}
+
+function serializeSubject(subject: PrismaSubject, questionsCount = 0): SubjectWithCount {
+  return {
+    id: subject.id,
+    focusId: subject.focusId,
+    name: subject.name,
+    description: subject.description,
+    createdAt: subject.createdAt.toISOString(),
+    updatedAt: subject.updatedAt.toISOString(),
+    deletedAt: subject.deletedAt?.toISOString() ?? null,
+    questionsCount
+  };
 }
 
 export class PrismaSubjectRepository implements ISubjectRepository {
@@ -54,7 +68,7 @@ export class PrismaSubjectRepository implements ISubjectRepository {
     }));
   }
 
-  async findById(id: string, userId: string): Promise<(Subject & { focus?: Focus; questionsCount?: number }) | null> {
+  async findById(id: string, userId: string): Promise<SubjectWithCount | null> {
     const subject = await prisma.subject.findFirst({
       where: {
         id,
@@ -64,20 +78,12 @@ export class PrismaSubjectRepository implements ISubjectRepository {
           deletedAt: null
         }
       },
-      include: {
-        focus: true,
-        _count: {
-          select: { questions: { where: { deletedAt: null } } }
-        }
-      }
+      include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
     });
 
     if (!subject) return null;
 
-    return {
-      ...subject,
-      questionsCount: subject._count.questions
-    };
+    return serializeSubject(subject, subject._count.questions);
   }
 
   async create(data: CreateSubjectData, userId: string): Promise<Subject> {
@@ -87,16 +93,16 @@ export class PrismaSubjectRepository implements ISubjectRepository {
     });
 
     if (!focus) {
-      throw new Error('Foco não encontrado ou não pertence ao usuário');
+      throw new AppError('Foco não encontrado ou não pertence ao usuário', 404);
     }
 
-    return prisma.subject.create({
+    return serializeSubject(await prisma.subject.create({
       data: {
         focusId: data.focusId,
         name: data.name,
         description: data.description
       }
-    });
+    }));
   }
 
   async update(id: string, userId: string, data: UpdateSubjectData): Promise<Subject | null> {
@@ -110,13 +116,13 @@ export class PrismaSubjectRepository implements ISubjectRepository {
 
     if (!subject) return null;
 
-    return prisma.subject.update({
+    return serializeSubject(await prisma.subject.update({
       where: { id },
       data: {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && { description: data.description })
       }
-    });
+    }));
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {
@@ -151,12 +157,12 @@ export class PrismaSubjectRepository implements ISubjectRepository {
 }
 
 export class InMemorySubjectRepository implements ISubjectRepository {
-  public subjects: Subject[] = [];
-  public fociRef: Focus[] = [];
+  public subjects: PrismaSubject[] = [];
+  public fociRef: import('@prisma/client').Focus[] = [];
   public questionsRef?: { id: string; subjectId: string; deletedAt: Date | null }[];
 
   constructor(
-    fociRef: Focus[] = [],
+    fociRef: import('@prisma/client').Focus[] = [],
     questionsRef?: { id: string; subjectId: string; deletedAt: Date | null }[]
   ) {
     this.fociRef = fociRef;
@@ -184,7 +190,7 @@ export class InMemorySubjectRepository implements ISubjectRepository {
       });
   }
 
-  async findById(id: string, userId: string): Promise<(Subject & { focus?: Focus; questionsCount?: number }) | null> {
+  async findById(id: string, userId: string): Promise<SubjectWithCount | null> {
     const subject = this.subjects.find(s => s.id === id && s.deletedAt === null);
     if (!subject) return null;
 
@@ -194,19 +200,17 @@ export class InMemorySubjectRepository implements ISubjectRepository {
     const questionsCount = (this.questionsRef || []).filter(q => q.subjectId === subject.id && q.deletedAt === null).length;
 
     return {
-      ...subject,
-      focus,
-      questionsCount
+      ...serializeSubject(subject, questionsCount)
     };
   }
 
   async create(data: CreateSubjectData, userId: string): Promise<Subject> {
     const focus = this.fociRef.find(f => f.id === data.focusId && f.userId === userId && f.deletedAt === null);
     if (!focus) {
-      throw new Error('Foco não encontrado ou não pertence ao usuário');
+      throw new AppError('Foco não encontrado ou não pertence ao usuário', 404);
     }
 
-    const subject: Subject = {
+    const subject: PrismaSubject = {
       id: crypto.randomUUID(),
       focusId: data.focusId,
       name: data.name,
@@ -216,7 +220,7 @@ export class InMemorySubjectRepository implements ISubjectRepository {
       deletedAt: null
     };
     this.subjects.push(subject);
-    return subject;
+    return serializeSubject(subject);
   }
 
   async update(id: string, userId: string, data: UpdateSubjectData): Promise<Subject | null> {
@@ -230,7 +234,7 @@ export class InMemorySubjectRepository implements ISubjectRepository {
     if (data.description !== undefined) subject.description = data.description;
     subject.updatedAt = new Date();
 
-    return subject;
+    return serializeSubject(subject);
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {

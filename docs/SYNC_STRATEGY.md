@@ -176,6 +176,16 @@ sequenceDiagram
         "questionId": "c3e44d11-...",
         "isCorrect": true,
         "selectedOptionId": "f7d99a01-...",
+        "questionSnapshot": {
+          "type": "MULTIPLE_CHOICE",
+          "statement": "Qual é a capital do Brasil?",
+          "explanation": "Brasília é a capital federal.",
+          "expectedAnswer": null,
+          "options": [
+            { "id": "a7d99a01-...", "text": "Rio de Janeiro", "isCorrect": false, "orderIndex": 0 },
+            { "id": "f7d99a01-...", "text": "Brasília", "isCorrect": true, "orderIndex": 1 }
+          ]
+        },
         "timeSpentSeconds": 18,
         "clientStudyDate": "2026-11-05",
         "clientTimezone": "America/Sao_Paulo",

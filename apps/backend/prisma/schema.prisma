@@ -106,6 +106,7 @@ model QuestionOption {
   orderIndex Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  retiredAt  DateTime?
 
   question Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
   attempts QuestionAttempt[]
@@ -171,6 +172,7 @@ model QuestionAttempt {
   statementSnapshot            String?               @db.Text
   selectedOptionTextSnapshot   String?               @db.Text
   expectedAnswerSnapshot       String?               @db.Text
+  questionSnapshot             Json?                 @db.JsonB
   clientCreatedAt      DateTime
   syncedAt             DateTime              @default(now())
 

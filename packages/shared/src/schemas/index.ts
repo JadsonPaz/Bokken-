@@ -39,15 +39,60 @@ export const updateSubjectSchema = createSubjectSchema.omit({ focusId: true }).p
 
 export const questionOptionSchema = z.object({
   id: z.string().uuid().optional(),
-  text: z.string().min(1, 'O texto da alternativa é obrigatório'),
+  text: z.string().trim().min(1, 'O texto da alternativa é obrigatório'),
+  isCorrect: z.boolean(),
+  orderIndex: z.number().int().nonnegative().optional()
+});
+
+export const questionOptionSnapshotSchema = z.object({
+  id: z.string().uuid(),
+  text: z.string().trim().min(1),
   isCorrect: z.boolean(),
   orderIndex: z.number().int().nonnegative()
+});
+
+export const questionSnapshotSchema = z.object({
+  type: z.nativeEnum(QuestionType),
+  statement: z.string().trim().min(3),
+  explanation: z.string().nullable().optional(),
+  expectedAnswer: z.string().nullable().optional(),
+  options: z.array(questionOptionSnapshotSchema)
+}).superRefine((snapshot, ctx) => {
+  if (snapshot.type === QuestionType.MULTIPLE_CHOICE) {
+    if (snapshot.options.length < 2) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots de múltipla escolha exigem pelo menos duas alternativas.', path: ['options'] });
+    }
+    if (snapshot.options.filter(option => option.isCorrect).length !== 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots de múltipla escolha exigem exatamente uma alternativa correta.', path: ['options'] });
+    }
+    if (snapshot.expectedAnswer !== undefined && snapshot.expectedAnswer !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots de múltipla escolha não podem conter resposta esperada discursiva.', path: ['expectedAnswer'] });
+    }
+  }
+
+  if (snapshot.type === QuestionType.DISCURSIVE) {
+    if (!snapshot.expectedAnswer || snapshot.expectedAnswer.trim().length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots discursivos exigem resposta esperada.', path: ['expectedAnswer'] });
+    }
+    if (snapshot.options.length !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots discursivos não podem conter alternativas.', path: ['options'] });
+    }
+  }
+
+  const positions = snapshot.options.map(option => option.orderIndex);
+  if (new Set(positions).size !== positions.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'As posições das alternativas devem ser únicas.', path: ['options'] });
+  }
+  const optionIds = snapshot.options.map(option => option.id);
+  if (new Set(optionIds).size !== optionIds.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Os IDs das alternativas devem ser únicos.', path: ['options'] });
+  }
 });
 
 export const baseQuestionSchema = z.object({
   subjectId: z.string().uuid('ID de matéria inválido'),
   type: z.nativeEnum(QuestionType),
-  statement: z.string().min(3, 'O enunciado deve ter no mínimo 3 caracteres'),
+  statement: z.string().trim().min(3, 'O enunciado deve ter no mínimo 3 caracteres'),
   explanation: z.string().max(2000).optional().nullable(),
   expectedAnswer: z.string().max(2000).optional().nullable(),
   options: z.array(questionOptionSchema).optional()
@@ -89,11 +134,15 @@ export const createQuestionSchema = baseQuestionSchema.superRefine((data, ctx) =
       });
     }
   }
+
+  if (data.options) {
+    validateUniqueOptionPositions(data.options, ctx);
+  }
 });
 
 export const updateQuestionSchema = z.object({
   type: z.nativeEnum(QuestionType).optional(),
-  statement: z.string().min(3, 'O enunciado deve ter no mínimo 3 caracteres').optional(),
+  statement: z.string().trim().min(3, 'O enunciado deve ter no mínimo 3 caracteres').optional(),
   explanation: z.string().max(2000).optional().nullable(),
   expectedAnswer: z.string().max(2000).optional().nullable(),
   options: z.array(questionOptionSchema).optional()
@@ -132,7 +181,22 @@ export const updateQuestionSchema = z.object({
       });
     }
   }
+
+  if (data.options) {
+    validateUniqueOptionPositions(data.options, ctx);
+  }
 });
+
+function validateUniqueOptionPositions(options: { orderIndex?: number }[], ctx: z.RefinementCtx): void {
+  const positions = options.map((option, index) => option.orderIndex ?? index);
+  if (new Set(positions).size !== positions.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'As posições das alternativas devem ser únicas.',
+      path: ['options']
+    });
+  }
+}
 
 // ==========================================
 // SCHEMAS DE SESSÃO E TENTATIVAS
@@ -161,6 +225,10 @@ export const questionAttemptSchema = z.object({
   timeSpentSeconds: z.number().int().nonnegative(),
   clientStudyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de data civil inválido (esperado YYYY-MM-DD)'),
   clientTimezone: z.string().optional().nullable(),
+  statementSnapshot: z.string().optional().nullable(),
+  selectedOptionTextSnapshot: z.string().optional().nullable(),
+  expectedAnswerSnapshot: z.string().optional().nullable(),
+  questionSnapshot: questionSnapshotSchema,
   clientCreatedAt: z.string().datetime()
 });
 

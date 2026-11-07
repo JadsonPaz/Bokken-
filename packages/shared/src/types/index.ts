@@ -82,6 +82,21 @@ export interface QuestionOption {
   updatedAt: string;
 }
 
+export interface QuestionOptionSnapshot {
+  id: string;
+  text: string;
+  isCorrect: boolean;
+  orderIndex: number;
+}
+
+export interface QuestionSnapshot {
+  type: QuestionType;
+  statement: string;
+  explanation?: string | null;
+  expectedAnswer?: string | null;
+  options: QuestionOptionSnapshot[];
+}
+
 export interface Question {
   id: string;
   subjectId: string;
@@ -155,6 +170,7 @@ export interface QuestionAttempt {
   statementSnapshot?: string | null;
   selectedOptionTextSnapshot?: string | null;
   expectedAnswerSnapshot?: string | null;
+  questionSnapshot: QuestionSnapshot;
   clientCreatedAt: string;
   syncedAt?: string;
 }

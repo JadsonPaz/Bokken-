@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma.js';
-import { Focus, Subject } from '@prisma/client';
-import { FocusWithCount } from '@bokken/shared';
+import { Focus as PrismaFocus } from '@prisma/client';
+import { Focus, FocusWithCount } from '@bokken/shared';
 
 export interface CreateFocusData {
   userId: string;
@@ -17,10 +17,14 @@ export interface UpdateFocusData {
 
 export interface IFocusRepository {
   findAllByUserId(userId: string): Promise<FocusWithCount[]>;
-  findById(id: string, userId: string): Promise<(Focus & { subjects?: Subject[] }) | null>;
+  findById(id: string, userId: string): Promise<FocusWithCount | null>;
   create(data: CreateFocusData): Promise<Focus>;
   update(id: string, userId: string, data: UpdateFocusData): Promise<Focus | null>;
   softDelete(id: string, userId: string): Promise<boolean>;
+}
+
+function serializeFocus(focus: PrismaFocus): Focus {
+  return { ...focus, createdAt: focus.createdAt.toISOString(), updatedAt: focus.updatedAt.toISOString(), deletedAt: focus.deletedAt?.toISOString() ?? null };
 }
 
 export class PrismaFocusRepository implements IFocusRepository {
@@ -63,8 +67,8 @@ export class PrismaFocusRepository implements IFocusRepository {
     });
   }
 
-  async findById(id: string, userId: string): Promise<(Focus & { subjects?: Subject[] }) | null> {
-    return prisma.focus.findFirst({
+  async findById(id: string, userId: string): Promise<FocusWithCount | null> {
+    const focus = await prisma.focus.findFirst({
       where: {
         id,
         userId,
@@ -73,21 +77,28 @@ export class PrismaFocusRepository implements IFocusRepository {
       include: {
         subjects: {
           where: { deletedAt: null },
-          orderBy: { createdAt: 'asc' }
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, _count: { select: { questions: { where: { deletedAt: null } } } } }
         }
       }
     });
+    if (!focus) return null;
+    return {
+      ...serializeFocus(focus),
+      subjectsCount: focus.subjects.length,
+      questionsCount: focus.subjects.reduce((n, s) => n + s._count.questions, 0)
+    };
   }
 
   async create(data: CreateFocusData): Promise<Focus> {
-    return prisma.focus.create({
+    return serializeFocus(await prisma.focus.create({
       data: {
         userId: data.userId,
         name: data.name,
         description: data.description,
         color: data.color || '#1e3a8a'
       }
-    });
+    }));
   }
 
   async update(id: string, userId: string, data: UpdateFocusData): Promise<Focus | null> {
@@ -97,14 +108,14 @@ export class PrismaFocusRepository implements IFocusRepository {
 
     if (!focus) return null;
 
-    return prisma.focus.update({
+    return serializeFocus(await prisma.focus.update({
       where: { id },
       data: {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && { description: data.description }),
         ...(data.color !== undefined && { color: data.color })
       }
-    });
+    }));
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {
@@ -151,7 +162,7 @@ export class PrismaFocusRepository implements IFocusRepository {
 }
 
 export class InMemoryFocusRepository implements IFocusRepository {
-  public foci: Focus[] = [];
+  public foci: PrismaFocus[] = [];
   public subjectsRef?: { id: string; focusId: string; deletedAt: Date | null }[];
   public questionsRef?: { id: string; subjectId: string; deletedAt: Date | null }[];
 
@@ -186,14 +197,17 @@ export class InMemoryFocusRepository implements IFocusRepository {
       });
   }
 
-  async findById(id: string, userId: string): Promise<(Focus & { subjects?: Subject[] }) | null> {
+  async findById(id: string, userId: string): Promise<FocusWithCount | null> {
     const focus = this.foci.find(f => f.id === id && f.userId === userId && f.deletedAt === null);
     if (!focus) return null;
-    return { ...focus };
+    const subjects = (this.subjectsRef || []).filter(subject => subject.focusId === id && subject.deletedAt === null);
+    const subjectIds = subjects.map(subject => subject.id);
+    const questionsCount = (this.questionsRef || []).filter(question => subjectIds.includes(question.subjectId) && question.deletedAt === null).length;
+    return { ...serializeFocus(focus), subjectsCount: subjects.length, questionsCount };
   }
 
   async create(data: CreateFocusData): Promise<Focus> {
-    const focus: Focus = {
+    const focus: PrismaFocus = {
       id: crypto.randomUUID(),
       userId: data.userId,
       name: data.name,
@@ -204,7 +218,7 @@ export class InMemoryFocusRepository implements IFocusRepository {
       deletedAt: null
     };
     this.foci.push(focus);
-    return focus;
+    return serializeFocus(focus);
   }
 
   async update(id: string, userId: string, data: UpdateFocusData): Promise<Focus | null> {
@@ -212,7 +226,7 @@ export class InMemoryFocusRepository implements IFocusRepository {
     if (index === -1) return null;
 
     const existing = this.foci[index];
-    const updated: Focus = {
+    const updated: PrismaFocus = {
       ...existing,
       ...(data.name !== undefined && { name: data.name }),
       ...(data.description !== undefined && { description: data.description }),
@@ -220,7 +234,7 @@ export class InMemoryFocusRepository implements IFocusRepository {
       updatedAt: new Date()
     };
     this.foci[index] = updated;
-    return updated;
+    return serializeFocus(updated);
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {

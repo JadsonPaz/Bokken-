@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { Question as PrismaQuestion, QuestionOption as PrismaQuestionOption, QuestionType as PrismaQuestionType } from '@prisma/client';
 import { Question, QuestionOption, QuestionType, PaginatedResponse } from '@bokken/shared';
+import { AppError } from '../utils/errors.js';
 
 export interface CreateQuestionOptionData {
   text: string;
@@ -103,6 +104,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
         where,
         include: {
           options: {
+            where: { retiredAt: null },
             orderBy: { orderIndex: 'asc' }
           }
         },
@@ -136,6 +138,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
       },
       include: {
         options: {
+          where: { retiredAt: null },
           orderBy: { orderIndex: 'asc' }
         }
       }
@@ -156,7 +159,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
     });
 
     if (!subject) {
-      throw new Error('Matéria não encontrada ou não pertence ao usuário');
+      throw new AppError('Matéria não encontrada ou não pertence ao usuário', 404);
     }
 
     return prisma.$transaction(async (tx) => {
@@ -202,7 +205,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
           focus: { userId, deletedAt: null }
         }
       },
-      include: { options: true }
+      include: { options: { where: { retiredAt: null } } }
     });
 
     if (!existing) return null;
@@ -225,13 +228,15 @@ export class PrismaQuestionRepository implements IQuestionRepository {
 
       // Se virou discursiva, remove opções antigas
       if (newType === QuestionType.DISCURSIVE) {
-        await tx.questionOption.deleteMany({
-          where: { questionId: id }
+        await tx.questionOption.updateMany({
+          where: { questionId: id, retiredAt: null },
+          data: { retiredAt: new Date() }
         });
       } else if (newType === QuestionType.MULTIPLE_CHOICE && data.options !== undefined) {
-        // Se forneceu novas alternativas, substitui com segurança
-        await tx.questionOption.deleteMany({
-          where: { questionId: id }
+        // Preserve IDs referenciados por tentativas e mantenha versões antigas arquivadas.
+        await tx.questionOption.updateMany({
+          where: { questionId: id, retiredAt: null },
+          data: { retiredAt: new Date() }
         });
 
         await tx.questionOption.createMany({
@@ -245,7 +250,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
       }
 
       const finalOptions = await tx.questionOption.findMany({
-        where: { questionId: id },
+        where: { questionId: id, retiredAt: null },
         orderBy: { orderIndex: 'asc' }
       });
 
@@ -278,6 +283,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
 
 export class InMemoryQuestionRepository implements IQuestionRepository {
   public questions: (Question & { deletedAtDate: Date | null })[] = [];
+  public archivedOptions: QuestionOption[] = [];
   public subjectsRef: { id: string; focusId: string; deletedAt: Date | null }[] = [];
   public fociRef: { id: string; userId: string; deletedAt: Date | null }[] = [];
 
@@ -332,7 +338,7 @@ export class InMemoryQuestionRepository implements IQuestionRepository {
 
   async create(data: CreateQuestionData, userId: string): Promise<Question> {
     if (!this.isOwner(data.subjectId, userId)) {
-      throw new Error('Matéria não encontrada ou não pertence ao usuário');
+      throw new AppError('Matéria não encontrada ou não pertence ao usuário', 404);
     }
 
     const qId = crypto.randomUUID();
@@ -378,8 +384,10 @@ export class InMemoryQuestionRepository implements IQuestionRepository {
 
     let updatedOptions = existing.options;
     if (newType === QuestionType.DISCURSIVE) {
+      this.archivedOptions.push(...(existing.options ?? []));
       updatedOptions = [];
     } else if (data.options !== undefined) {
+      this.archivedOptions.push(...(existing.options ?? []));
       updatedOptions = data.options.map((opt, idx) => ({
         id: crypto.randomUUID(),
         questionId: id,

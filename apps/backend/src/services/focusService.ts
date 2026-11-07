@@ -9,12 +9,12 @@ export class FocusService {
     return this.focusRepository.findAllByUserId(userId);
   }
 
-  async getFocus(id: string, userId: string): Promise<Focus> {
+  async getFocus(id: string, userId: string): Promise<FocusWithCount> {
     const focus = await this.focusRepository.findById(id, userId);
     if (!focus) {
       throw new AppError('Foco não encontrado', 404);
     }
-    return focus as unknown as Focus;
+    return focus;
   }
 
   async createFocus(userId: string, input: unknown): Promise<Focus> {

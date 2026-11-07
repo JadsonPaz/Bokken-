@@ -42,11 +42,7 @@ export class QuestionService {
         : []
     };
 
-    try {
-      return await this.questionRepository.create(data, userId);
-    } catch (err: any) {
-      throw new AppError(err.message || 'Erro ao criar pergunta', 404);
-    }
+    return this.questionRepository.create(data, userId);
   }
 
   async updateQuestion(id: string, userId: string, input: unknown): Promise<Question> {

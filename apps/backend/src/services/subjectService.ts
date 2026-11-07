@@ -12,12 +12,12 @@ export class SubjectService {
     return this.subjectRepository.findAllByFocusId(focusId, userId);
   }
 
-  async getSubject(id: string, userId: string): Promise<Subject & { questionsCount?: number }> {
+  async getSubject(id: string, userId: string): Promise<SubjectWithCount> {
     const subject = await this.subjectRepository.findById(id, userId);
     if (!subject) {
       throw new AppError('Matéria não encontrada ou não pertence ao usuário', 404);
     }
-    return subject as unknown as Subject & { questionsCount?: number };
+    return subject;
   }
 
   async createSubject(userId: string, input: unknown): Promise<Subject> {
@@ -28,11 +28,7 @@ export class SubjectService {
       description: validated.description?.trim() || null
     };
 
-    try {
-      return await this.subjectRepository.create(data, userId);
-    } catch (err: any) {
-      throw new AppError(err.message || 'Erro ao criar matéria', 404);
-    }
+    return this.subjectRepository.create(data, userId);
   }
 
   async updateSubject(id: string, userId: string, input: unknown): Promise<Subject> {

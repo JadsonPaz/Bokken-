@@ -41,6 +41,8 @@ Consulte os documentos detalhados na pasta `docs/`:
 
 ---
 
-## 🚀 Próximos Passos
+## 🚀 Estado do Desenvolvimento
 
-A primeira etapa do desenvolvimento (Etapa 1: Fundação do Monorepo e Configurações de Tooling) será iniciada após o alinhamento e validação do planejamento inicial.
+As Etapas 1 e 2 foram concluídas. A Etapa 3 (Gestão de Conteúdos) está implementada e em revisão, incluindo CRUD de focos, matérias e perguntas, isolamento por usuário e snapshots de contexto para tentativas futuras. A Etapa 4 ainda não foi iniciada.
+
+Consulte o [roadmap](docs/ROADMAP.md) para os critérios e escopo das próximas etapas.
