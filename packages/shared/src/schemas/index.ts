@@ -9,7 +9,9 @@ export const registerUserSchema = z.object({
   name: z.string().min(2, 'O nome deve ter no mínimo 2 caracteres').max(100),
   email: z.string().email('Email inválido'),
   password: z.string().min(6, 'A senha deve ter no mínimo 6 caracteres'),
-  timezone: z.string().default('America/Sao_Paulo')
+  timezone: z.string().default('America/Sao_Paulo').refine(value => {
+    try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; } catch { return false; }
+  }, 'Fuso horário IANA inválido')
 });
 
 export const loginUserSchema = z.object({
@@ -231,6 +233,28 @@ export const questionAttemptSchema = z.object({
   questionSnapshot: questionSnapshotSchema,
   clientCreatedAt: z.string().datetime()
 });
+
+export const createQuizSessionSchema = z.object({
+  mode: z.nativeEnum(QuizMode),
+  focusId: z.string().uuid().optional(),
+  subjectId: z.string().uuid().optional(),
+  focusIds: z.array(z.string().uuid()).min(2).max(50).optional(),
+  types: z.array(z.nativeEnum(QuestionType)).min(1).max(2).default([QuestionType.MULTIPLE_CHOICE, QuestionType.DISCURSIVE]),
+  limit: z.number().int().min(1).max(200).nullable().default(20)
+}).strict().superRefine((data, ctx) => {
+  const valid = (data.mode === QuizMode.SUBJECT && !!data.subjectId && !data.focusId && !data.focusIds) ||
+    (data.mode === QuizMode.FOCUS && !!data.focusId && !data.subjectId && !data.focusIds) ||
+    (data.mode === QuizMode.GENERAL_ALL && !data.focusId && !data.subjectId && !data.focusIds) ||
+    (data.mode === QuizMode.GENERAL_CUSTOM && !!data.focusIds && !data.focusId && !data.subjectId);
+  if (!valid) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Escopo incompatível com o modo do quiz.' });
+  if (new Set(data.types).size !== data.types.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Tipos de pergunta duplicados.' });
+  if (data.focusIds && new Set(data.focusIds).size !== data.focusIds.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Focos duplicados.' });
+});
+
+export const submitQuizAnswerSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal(QuestionType.MULTIPLE_CHOICE), selectedOptionId: z.string().uuid(), idempotencyKey: z.string().uuid(), timeSpentSeconds: z.number().int().min(0).max(86400).default(0) }).strict(),
+  z.object({ type: z.literal(QuestionType.DISCURSIVE), assessment: z.nativeEnum(DiscursiveAssessment), idempotencyKey: z.string().uuid(), timeSpentSeconds: z.number().int().min(0).max(86400).default(0) }).strict()
+]);
 
 export const syncPushPayloadSchema = z.object({
   sessions: z.array(quizSessionSchema),

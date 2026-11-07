@@ -7,6 +7,7 @@ import { RegisterPage } from './pages/RegisterPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { FocusPage } from './pages/FocusPage.js';
 import { SubjectPage } from './pages/SubjectPage.js';
+import { QuizPage } from './pages/QuizPage.js';
 
 export const App: React.FC = () => {
   return (
@@ -21,6 +22,8 @@ export const App: React.FC = () => {
           <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/foci/:id" element={<ProtectedRoute><FocusPage /></ProtectedRoute>} />
           <Route path="/subjects/:id" element={<ProtectedRoute><SubjectPage /></ProtectedRoute>} />
+          <Route path="/quiz" element={<ProtectedRoute><QuizPage /></ProtectedRoute>} />
+          <Route path="/quiz/sessions/:id" element={<ProtectedRoute><QuizPage /></ProtectedRoute>} />
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />

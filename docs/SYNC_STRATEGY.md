@@ -1,6 +1,8 @@
 # Estratégia de Sincronização: IndexedDB & PostgreSQL
 
-Este documento descreve detalhadamente o funcionamento da arquitetura **Offline-First** do **Bokken Estudos**, definindo a interação entre o armazenamento local (Dexie.js / IndexedDB) e o servidor central (PostgreSQL), abordando cenários avançados de concorrência, tentativas fora de ordem, integridade histórica e fuso horário.
+> **Estado:** este documento descreve a futura Etapa 5, não funcionalidades disponíveis agora. Sessões e tentativas online da Etapa 4 são criadas pelo servidor (`POST /api/quizzes/sessions` e rotas filhas), que mantém um manifesto `QuizSessionQuestion` com `questionSnapshot`. O cliente não envia `userId`, snapshot ou resultado correto. Sincronização, Dexie como persistência local e PWA ainda não foram implementados. Para ingestão offline, manifestos/tickets devem ser emitidos pelo servidor; uma assinatura feita com chave armazenada no navegador não autentica resultados contra um cliente comprometido.
+
+Este documento registra uma proposta de sincronização **futura** do Bokken Estudos. Os exemplos de Dexie, fila e endpoints de sync são conceituais e não devem ser interpretados como implementação presente.
 
 ---
 
@@ -149,7 +151,13 @@ sequenceDiagram
      - O endpoint `/api/sync/pull` retorna entidades ativas e excluídas logicamente (`deletedAt IS NOT NULL`).
      - Ao receber uma entidade com `deletedAt !== null`, o cliente Dexie remove a entidade das tabelas locais ativas, garantindo que o catálogo offline permaneça idêntico ao servidor.
 
-### 3.4. Sessões de Quiz Offline (`QuizSession`)
+### 3.4. Sessões de Quiz — contrato online atual e extensão offline futura
+
+No fluxo online atual, o servidor seleciona e congela as perguntas no início da sessão. `QuizSessionQuestion` conserva snapshots e estados inclusive para itens pulados. Respostas referenciam a entrada do manifesto; a alternativa é validada contra seu snapshot, e `isCorrect` é calculado pelo backend. A identidade é derivada do JWT; data civil e fuso são derivados da configuração do usuário no servidor. O cliente envia somente escolha/autoavaliação, chave de idempotência e duração informativa.
+
+O fluxo abaixo descreve uma possibilidade anterior para envio offline e **não está implementado**. Antes de adotá-lo, substituir a confiança em IDs, snapshots e totais enviados pelo frontend por tickets de sessão emitidos pelo servidor, IDs idempotentes e validação referencial completa.
+
+#### Fluxo futuro (não implementado)
 - **Ciclo de Vida no Cliente:**
   1. **Início do Quiz:** O cliente gera `sessionId = crypto.randomUUID()` e grava no Dexie com `isSynced: false`, `startedAt: Date.now()`, `totalQuestions: N`.
   2. **Resolução:** Cada `QuestionAttempt` armazena `quizSessionId: sessionId`.

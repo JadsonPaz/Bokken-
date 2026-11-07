@@ -10,7 +10,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']),
   PORT: z.string().default('3001').transform(val => parseInt(val, 10)),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/bokken_db?schema=public'),
+  DATABASE_URL: z.string().default('postgresql://postgres:postgrespassword@localhost:5432/bokken_db?schema=public'),
   JWT_SECRET: z.string().optional(),
   JWT_EXPIRES_IN: z.string().default('7d')
 });

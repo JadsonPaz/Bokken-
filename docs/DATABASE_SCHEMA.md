@@ -1,5 +1,7 @@
 # Modelo Relacional do PostgreSQL (Prisma ORM)
 
+> Estado implementado: `QuizSessionQuestion` foi adicionado na migração `20261107000000_quiz_sessions_online`. A tabela mantém snapshot JSONB e posição para cada pergunta original da sessão. O DDL abaixo deve ser lido junto com `apps/backend/prisma/schema.prisma`, que é a fonte atual do modelo; não aplicar migrações sem backup e validação prévia.
+
 Este documento especifica a modelagem do banco de dados relacional PostgreSQL do **Bokken Estudos**, as regras de integridade e os índices estratégicos para suportar consultas analíticas, sincronização resiliente e preservação absoluta do histórico.
 
 ---
@@ -17,9 +19,11 @@ erDiagram
     Focus ||--o{ Subject : "contém"
     Subject ||--o{ Question : "contém"
     Question ||--o{ QuestionOption : "possui (se múltipla escolha)"
+    Question ||--o{ QuizSessionQuestion : "incluída no manifesto"
     Question ||--o{ QuestionAttempt : "alvo de (onDelete: Restrict)"
     Question ||--o{ QuestionSRSProgress : "estado SRS"
     QuizSession ||--o{ QuestionAttempt : "agrupa (opcional)"
+    QuizSession ||--|{ QuizSessionQuestion : "congela conjunto e ordem"
 
     User {
         uuid id PK
@@ -91,7 +95,7 @@ erDiagram
     }
 
     QuizSession {
-        uuid id PK "UUID gerado no cliente"
+        uuid id PK "UUID gerado no servidor"
         uuid userId FK
         enum mode "SUBJECT | FOCUS | GENERAL_ALL | GENERAL_CUSTOM"
         int totalQuestions
@@ -104,19 +108,33 @@ erDiagram
         datetime updatedAt
     }
 
+    QuizSessionQuestion {
+        uuid id PK
+        uuid sessionId FK
+        uuid questionId FK "onDelete: Restrict"
+        json snapshot "Snapshot completo criado pelo servidor"
+        int snapshotVersion "Versão do formato do snapshot"
+        int position "Posição imutável"
+        enum status "PENDING | ANSWERED | SKIPPED"
+        datetime answeredAt
+        datetime skippedAt
+        UK sessionId_questionId
+        UK sessionId_position
+    }
+
     QuestionAttempt {
-        uuid id PK "UUID gerado no cliente"
+        uuid id PK "UUID gerado no servidor"
         uuid userId FK
         uuid questionId FK "onDelete: Restrict"
         uuid quizSessionId FK "onDelete: SetNull"
+        uuid idempotencyKey "Única por usuário; anulável para legado"
         boolean isCorrect
         uuid selectedOptionId FK "onDelete: SetNull"
         enum discursiveAssessment "CORRECT | INCORRECT"
         int timeSpentSeconds
         string clientStudyDate "YYYY-MM-DD no fuso do aluno"
-        string clientTimezone "Timezone do dispositivo"
-        json questionSnapshot "Enunciado, tipo, justificativa, gabarito e todas as alternativas apresentadas"
-        datetime clientCreatedAt "Timestamp ISO UTC do dispositivo"
+        json questionSnapshot "Copiado do snapshot da entrada do manifesto"
+        datetime clientCreatedAt "Timestamp gravado pelo servidor"
         datetime syncedAt "Timestamp de gravação no servidor"
     }
 
@@ -154,6 +172,8 @@ enum DiscursiveAssessment {
   CORRECT
   INCORRECT
 }
+
+enum QuizQuestionStatus { PENDING ANSWERED SKIPPED }
 
 enum QuizMode {
   SUBJECT
@@ -229,6 +249,7 @@ model Question {
   subject       Subject               @relation(fields: [subjectId], references: [id], onDelete: Restrict)
   options       QuestionOption[]
   attempts      QuestionAttempt[]
+  sessionQuestions QuizSessionQuestion[]
   srsProgresses QuestionSRSProgress[]
 
   @@index([subjectId, deletedAt])
@@ -291,6 +312,7 @@ model QuizSession {
 
   user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   attempts QuestionAttempt[]
+  questions QuizSessionQuestion[]
 
   @@index([userId, startedAt])
   @@map("quiz_sessions")
@@ -301,6 +323,7 @@ model QuestionAttempt {
   userId               String                @db.Uuid
   questionId           String                @db.Uuid
   quizSessionId        String?               @db.Uuid
+  idempotencyKey       String?               @db.Uuid
   isCorrect            Boolean
   selectedOptionId     String?               @db.Uuid
   discursiveAssessment DiscursiveAssessment?
@@ -323,7 +346,30 @@ model QuestionAttempt {
   @@index([userId, clientStudyDate])
   @@index([questionId])
   @@index([quizSessionId])
+  @@unique([userId, idempotencyKey])
   @@map("question_attempts")
+}
+
+model QuizSessionQuestion {
+  id         String             @id @default(uuid()) @db.Uuid
+  sessionId  String             @db.Uuid
+  questionId String             @db.Uuid
+  snapshot   Json               @db.JsonB
+  snapshotVersion Int           @default(1)
+  position   Int
+  status     QuizQuestionStatus @default(PENDING)
+  answeredAt DateTime?
+  skippedAt  DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  session  QuizSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, position])
+  @@unique([sessionId, questionId])
+  @@index([sessionId, status, position])
+  @@map("quiz_session_questions")
 }
 
 model DailyStudyLog {
@@ -347,6 +393,13 @@ model DailyStudyLog {
 
 ## 3. Decisões Arquiteturais e Justificativas de Modelagem
 
+### 3.0. Manifesto imutável do quiz online (Etapa 4)
+- `quiz_session_questions` contém uma linha por pergunta escolhida pelo servidor, com posição, snapshot completo e status (`PENDING`, `ANSWERED`, `SKIPPED`). Perguntas não respondidas continuam no manifesto e são marcadas como puladas quando a sessão é encerrada.
+- A constraint única `(session_id, question_id)` impede repetição na mesma sessão; `(session_id, position)` mantém posições únicas.
+- A referência à pergunta usa `ON DELETE RESTRICT`; a exclusão de conteúdo é lógica. O snapshot é suficiente para interpretar o contexto mesmo após edição, e a FK mantém o vínculo de auditoria.
+- `question_attempts.idempotency_key` é anulável para compatibilidade com histórico anterior e tem unicidade por usuário. Respostas antigas não recebem chaves artificiais.
+- Esta migração é aditiva: nova tabela, enum, coluna anulável e índice. Não altera linhas históricas existentes. Ainda precisa de validação em PostgreSQL descartável; nenhuma migração deve ser executada contra o banco de desenvolvimento nesta tarefa.
+
 ### 3.1. Preservação Absoluta do Histórico (`onDelete: Restrict`)
 - **O Problema do Cascade:** Em sistemas de estudo, um erro clássico é definir `onDelete: Cascade` entre a Pergunta e a Tentativa. Se uma matéria ou foco for excluído, ou se uma pergunta for purgada acidentalmente, todo o histórico de resolução do estudante (tentativas, tempos e métricas) seria apagado.
 - **A Solução:**
@@ -354,7 +407,7 @@ model DailyStudyLog {
   - O mesmo se aplica a `Question.subject` e `Subject.focus`, que utilizam `onDelete: Restrict`.
   - A exclusão de conteúdos é **100% lógica (Soft Delete via `deletedAt`)**. Ao excluir um Foco, Matéria ou Pergunta, apenas o campo `deletedAt` é preenchido.
   - As perguntas excluídas logicamente são excluídas das consultas de novos quizzes (`WHERE deletedAt IS NULL`), mas permanecem no banco para alimentar relatórios históricos, gráficos de aproveitamento acumulado e auditoria.
-  - Cada tentativa futura deve carregar `questionSnapshot`, contendo tipo, enunciado, justificativa, resposta esperada e **todas** as alternativas apresentadas (texto, ordem e indicação da correta). O snapshot é capturado no cliente ao responder, inclusive em modo offline.
+  - Cada tentativa nova carrega `questionSnapshot`, contendo tipo, enunciado, justificativa, resposta esperada e **todas** as alternativas apresentadas (texto, ordem e indicação da correta). No quiz online, o snapshot é criado pelo servidor quando abre a sessão e copiado para a tentativa. O cliente não recebe o gabarito da questão pendente. A autorização para responder offline será definida na Etapa 5.
   - Ao editar alternativas, as linhas antigas recebem `retiredAt`; seus IDs e relações com tentativas permanecem intactos. A migração `20261106010000_preserve_question_attempt_context` apenas adiciona colunas anuláveis. Tentativas antigas não recebem snapshots fabricados porque não há como reconstruir com segurança versões anteriores do conteúdo.
   - O único `onDelete: Cascade` permitido é no nível do `User`: se o estudante solicitar a exclusão de sua conta integral (em conformidade com a LGPD), todos os seus dados pessoais são purgados em cascata.
 
@@ -365,6 +418,6 @@ model DailyStudyLog {
   - A tentativa registra `clientCreatedAt` (timestamp UTC preciso) e **`clientStudyDate`** (string no formato `YYYY-MM-DD` representando o dia civil local do aluno quando a resposta foi submetida).
   - O `DailyStudyLog` utiliza `@db.Date`, consolidando o dia civil real de estudo sem distorções de fuso.
 
-### 3.3. Identificadores de Sessões Offline (`QuizSession`)
-- **Geração Descentralizada:** Sessões criadas no cliente recebem um UUID v4 via `crypto.randomUUID()`.
-- **Relacionamento Seguro:** `QuestionAttempt.quizSessionId` possui `onDelete: SetNull`. Se uma sessão for cancelada ou descartada, as tentativas individuais de resposta continuam salvas no histórico do estudante.
+### 3.3. Identificadores de Sessões (`QuizSession`)
+- **Fluxo online atual:** sessões, entradas do manifesto e tentativas recebem UUID no servidor. Uma chave de idempotência fornecida para a submissão impede duplicação por usuário.
+- **Relacionamento histórico:** `QuestionAttempt.quizSessionId` usa `onDelete: SetNull`, preservando tentativas caso uma sessão seja removida. A retenção do manifesto e snapshots da sessão é independente das alterações posteriores de conteúdo.

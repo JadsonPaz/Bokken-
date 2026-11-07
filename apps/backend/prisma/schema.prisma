@@ -24,6 +24,12 @@ enum QuizMode {
   GENERAL_CUSTOM
 }
 
+enum QuizQuestionStatus {
+  PENDING
+  ANSWERED
+  SKIPPED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -91,6 +97,7 @@ model Question {
   subject       Subject               @relation(fields: [subjectId], references: [id], onDelete: Restrict)
   options       QuestionOption[]
   attempts      QuestionAttempt[]
+  sessionQuestions QuizSessionQuestion[]
   srsProgresses QuestionSRSProgress[]
 
   @@index([subjectId, deletedAt])
@@ -153,6 +160,7 @@ model QuizSession {
 
   user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   attempts QuestionAttempt[]
+  questions QuizSessionQuestion[]
 
   @@index([userId, startedAt])
   @@map("quiz_sessions")
@@ -163,6 +171,7 @@ model QuestionAttempt {
   userId               String                @db.Uuid
   questionId           String                @db.Uuid
   quizSessionId        String?               @db.Uuid
+  idempotencyKey       String?               @db.Uuid
   isCorrect            Boolean
   selectedOptionId     String?               @db.Uuid
   discursiveAssessment DiscursiveAssessment?
@@ -185,7 +194,30 @@ model QuestionAttempt {
   @@index([userId, clientStudyDate])
   @@index([questionId])
   @@index([quizSessionId])
+  @@unique([userId, idempotencyKey])
   @@map("question_attempts")
+}
+
+model QuizSessionQuestion {
+  id          String             @id @default(uuid()) @db.Uuid
+  sessionId   String             @db.Uuid
+  questionId  String             @db.Uuid
+  snapshot    Json               @db.JsonB
+  snapshotVersion Int            @default(1)
+  position    Int
+  status      QuizQuestionStatus @default(PENDING)
+  answeredAt  DateTime?
+  skippedAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  session  QuizSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, position])
+  @@unique([sessionId, questionId])
+  @@index([sessionId, status, position])
+  @@map("quiz_session_questions")
 }
 
 model DailyStudyLog {

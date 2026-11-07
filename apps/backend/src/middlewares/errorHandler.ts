@@ -8,6 +8,12 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
+  const parserError = error as Error & { status?: number; type?: string };
+  if (parserError.status === 400 && parserError.type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'JSON malformado na requisição.' });
+    return;
+  }
+
   if (error instanceof ZodError) {
     const formattedErrors = error.errors.map(err => ({
       field: err.path.join('.'),

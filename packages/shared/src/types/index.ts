@@ -139,6 +139,21 @@ export interface QuizSession {
   updatedAt: string;
 }
 
+export enum QuizQuestionStatus { PENDING = 'PENDING', ANSWERED = 'ANSWERED', SKIPPED = 'SKIPPED' }
+export type QuizPromptSnapshot = Omit<QuestionSnapshot, 'options'> & { options: Array<Omit<QuestionOptionSnapshot, 'isCorrect'> & { isCorrect?: boolean }> };
+export interface QuizSessionQuestion {
+  id: string; sessionId: string; questionId: string; snapshot: QuizPromptSnapshot; snapshotVersion: number;
+  position: number; status: QuizQuestionStatus; answeredAt?: string | null; skippedAt?: string | null;
+  attempt?: QuestionAttempt | null;
+}
+export interface QuizSessionDetail extends QuizSession {
+  questions: QuizSessionQuestion[];
+}
+export interface CreateQuizSessionInput {
+  mode: QuizMode; focusId?: string; subjectId?: string; focusIds?: string[];
+  types: QuestionType[]; limit: number | null;
+}
+
 export interface FocusWithCount extends Focus {
   subjectsCount: number;
   questionsCount: number;

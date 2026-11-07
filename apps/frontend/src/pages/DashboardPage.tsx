@@ -112,6 +112,7 @@ export const DashboardPage: React.FC = () => {
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <p className="text-sm text-slate-500">Bem-vindo de volta,</p>
           <h2 className="text-2xl font-bold text-slate-900 mt-0.5">{user?.name}</h2>
+          <Link to="/quiz" className="inline-flex mt-4 px-4 py-2 rounded-xl bg-bokken-pine text-white text-sm font-semibold">Iniciar quiz</Link>
         </div>
 
         {/* Focos */}

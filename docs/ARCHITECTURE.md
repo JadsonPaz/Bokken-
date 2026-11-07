@@ -1,57 +1,34 @@
 # Arquitetura do Bokken Estudos
 
-Este documento detalha as decisões de engenharia, padrões arquiteturais, segurança de dados e a organização sistêmica do **Bokken Estudos**.
+Este documento descreve a arquitetura implementada e identifica claramente as partes ainda planejadas. Hoje o uso de quiz é online-first; IndexedDB, PWA e sincronização continuam no roadmap da Etapa 5.
 
 ---
 
 ## 1. Visão Geral da Arquitetura
 
-O Bokken Estudos adota uma arquitetura **Offline-First** orientada a eventos e persistência local como fonte primária de verdade (*Single Source of Truth*) no cliente.
+O Bokken Estudos é um monorepo React/Express. Na Etapa 4, o PostgreSQL é a autoridade para sessões, manifestos e tentativas; o cliente envia somente a resposta e uma chave de idempotência. A arquitetura offline-first é uma evolução planejada, não uma capacidade atual.
 
 ```mermaid
-flowchart TD
-    subgraph Client ["Frontend PWA (Browser / Mobile / Desktop)"]
-        UI["Componentes React + Tailwind"]
-        Hooks["Custom Hooks & State Management"]
-        DomainService["Serviços de Domínio (SRS, Quiz, Stats)"]
-        SyncEngine["Motor de Sincronização (SyncEngine)"]
-        DexieDB[("IndexedDB (Dexie.js)\nFonte Local da Verdade")]
-        SW["Service Worker (Vite PWA / Cache de Assets)"]
-
-        UI --> Hooks
-        Hooks --> DomainService
-        DomainService --> DexieDB
-        DomainService --> SyncEngine
-        SyncEngine <--> DexieDB
-    end
-
-    subgraph Server ["Backend (Node.js + Express)"]
-        API["REST API (Rotas & Middlewares Auth)"]
-        Controllers["Controllers & Validação Zod"]
-        Services["Serviços de Negócio"]
-        PrismaORM["Prisma ORM (Ownership Scoping)"]
-        Postgres[("PostgreSQL\nFonte Central Sincronizada")]
-
-        API --> Controllers
-        Controllers --> Services
-        Services --> PrismaORM
-        PrismaORM --> Postgres
-    end
-
-    SyncEngine <--"HTTP / JSON (REST Sync API)\nSessões e Tentativas em Lote"--> API
+flowchart LR
+    UI["React UI"] --> Client["API client / JSON"]
+    Client <-->|"HTTP + JWT"| API["Express REST API"]
+    API --> Auth["Auth middleware"] --> Controller["Controllers + Zod"] --> Service["Quiz/content services"] --> Prisma["Prisma"] --> DB[("PostgreSQL")]
+    Future["Dexie / PWA / sync\nEtapa 5 planejada"] -. futuro .-> Client
 ```
 
 ### Princípios Norteadores:
-1. **Zero Bloqueio por Rede:** O usuário pode abrir o aplicativo, navegar pelos Focos, configurar um quiz e responder perguntas sem nenhuma requisição de rede ativa.
-2. **Idempotência Garantida:** Todo registro transacional (como tentativas de questões e sessões) nasce com UUID v4 no frontend. Reenvios nunca duplicam dados.
-3. **Preservação Histórica Inegociável:** Respostas e tentativas nunca são apagadas por exclusões de conteúdo. O banco utiliza `onDelete: Restrict` e Soft Delete.
-4. **Isolamento Multitenant Estrito:** O backend impõe escopo de propriedade em 100% das consultas do Prisma e na validação da árvore hierárquica.
+1. **Autoridade no servidor:** sessão, manifesto e snapshot são criados pelo backend; a identidade vem do JWT.
+2. **Idempotência de resposta:** cada tentativa tem chave UUID de idempotência por usuário, garantida por índice único.
+3. **Preservação histórica:** snapshots carregam enunciado, justificativa, resposta esperada e todas as alternativas apresentadas.
+4. **Isolamento multitenant:** consultas de quiz são limitadas ao usuário autenticado e a seus conteúdos ativos.
 
 ---
 
 ## 2. Estrutura do Repositório (Monorepo)
 
 O projeto é organizado no formato monorepo utilizando workspaces do `npm` ou `pnpm`, permitindo o compartilhamento seguro de contratos e tipos entre cliente e servidor sem duplicação de código.
+
+> A árvore abaixo é uma visão lógica do destino do monorepo e inclui diretórios planejados; confira a árvore do repositório para os arquivos realmente existentes.
 
 ```
 bokken/
@@ -164,9 +141,13 @@ Ao criar um elemento filho (ex: Pergunta vinculada a uma Matéria), o backend va
 2. `POST /api/questions`: valida se `subjectId` pertence a um Foco de `req.user.id`.
 Se a validação falhar, a API retorna `404 Not Found` (em vez de `403 Forbidden`) para não confirmar a existência de identificadores alheios a atacantes.
 
-### 3.4. Blindagem no Motor de Sincronização (`SyncPush`)
-No endpoint `POST /api/sync/push`:
-- O payload traz uma lista de tentativas com `questionId`.
-- O backend consulta o banco verificando se todas as `questionId`s enviadas pertencem à árvore de Focos do usuário autenticado.
-- Tentativas com `questionId` inválida ou de outro usuário são imediatamente descartadas com log de segurança.
-- O campo `userId` inserido em `QuestionAttempt` e `QuizSession` é injetado pelo servidor a partir de `req.user.id`.
+### 3.4. Contrato de quiz online atual
+- `POST /api/quizzes/sessions` seleciona perguntas ativas de conteúdo pertencente ao usuário autenticado e grava snapshot completo + posição no manifesto.
+- `GET` e as rotas de resposta consultam a sessão dentro do escopo do proprietário. O cliente não fornece `userId`.
+- Para responder, a API carrega o snapshot armazenado, valida o tipo e verifica que a alternativa enviada faz parte dele. `isCorrect` é calculado no servidor.
+- A resposta discursiva recebe uma autoavaliação enumerada; o servidor deriva `isCorrect` dela. Chaves UUID idempotentes têm unicidade por usuário.
+- `clientStudyDate` e `clientTimezone` são derivados pelo servidor do relógio de gravação e do fuso cadastrado no usuário; não vêm no payload.
+- Snapshots pendentes não revelam alternativa correta, justificativa ou resposta esperada; esse conteúdo aparece depois do registro da resposta.
+
+### 3.5. Sincronização futura
+Não existe endpoint `POST /api/sync/push` nesta etapa. Na Etapa 5, identidade deverá continuar sendo derivada do JWT. O manifesto original do servidor deverá ser usado para validar todas as respostas offline; tickets por sessão/questão, idempotência e resolução de replay serão definidos antes da implementação.
