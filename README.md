@@ -1,6 +1,6 @@
 # Bokken Estudos
 
-> Plataforma pessoal de estudos baseada em perguntas e respostas. Quizzes online estão em implementação; flashcards, repetição espaçada e uso offline estão planejados para etapas futuras.
+> Plataforma pessoal de estudos baseada em perguntas e respostas. Quizzes online estão concluídos; o app shell PWA já pode ser instalado e aberto offline após o primeiro carregamento online. Conteúdo offline e sincronização continuam planejados na Etapa 5.
 
 ---
 
@@ -16,7 +16,8 @@ O **Bokken Estudos** foi concebido para proporcionar sessões de estudo confort�
 - **Framework:** React + Vite + TypeScript
 - **Estilização:** Tailwind CSS (tema focado em concentração: azul-marinho, verde-escuro e toques sutis)
 - **Roteamento:** React Router
-- **Persistência Local / PWA:** Planejadas para a Etapa 5 (ainda não implementadas)
+- **PWA:** Manifest, ícones e app shell estático em cache; o Service Worker não armazena respostas da API
+- **Cache de conteúdo offline:** Planejado para subetapas futuras; Dexie define os contratos, ainda sem preenchimento de conteúdo pela UI
 
 ### Backend
 - **Runtime & Servidor:** Node.js + Express + TypeScript
@@ -42,6 +43,6 @@ Consulte os documentos detalhados na pasta `docs/`:
 
 ## 🚀 Estado do Desenvolvimento
 
-As Etapas 1 e 2 estão concluídas. A Etapa 3 (Gestão de Conteúdos) está implementada, com CRUD de focos, matérias e perguntas, isolamento por usuário e snapshots para preservar o contexto histórico. A Etapa 4 (Quiz online e registro de tentativas) está em implementação. O quiz salva no servidor o manifesto e os snapshots de cada sessão. Modo offline, sincronização e PWA pertencem à Etapa 5 e ainda não estão implementados.
+As Etapas 1, 2, 3, 3.1 e 4 estão concluídas. A Etapa 3 oferece CRUD de focos, matérias e perguntas, isolamento por usuário e preservação de snapshots históricos. A Etapa 4 oferece quiz online com manifesto e snapshots por sessão; testes automatizados, integração PostgreSQL e fluxos manuais foram validados pelo proprietário. Na Etapa 5, as subetapas 5.1 (contratos e armazenamento local) e 5.2 (PWA e app shell) foram implementadas e validadas. O shell estático pode ser reaberto offline após o primeiro carregamento online; conteúdo privado, sessões offline e sincronização ainda não estão disponíveis. O primeiro acesso e a sincronização inicial exigirão conexão à internet.
 
 Consulte o [roadmap](docs/ROADMAP.md) para os critérios e escopo das próximas etapas.

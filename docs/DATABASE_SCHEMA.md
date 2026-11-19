@@ -1,6 +1,6 @@
 # Modelo Relacional do PostgreSQL (Prisma ORM)
 
-> Estado implementado: `QuizSessionQuestion` foi adicionado na migração `20261107000000_quiz_sessions_online`. A tabela mantém snapshot JSONB e posição para cada pergunta original da sessão. O DDL abaixo deve ser lido junto com `apps/backend/prisma/schema.prisma`, que é a fonte atual do modelo; não aplicar migrações sem backup e validação prévia.
+> Estado implementado: `QuizSessionQuestion` foi adicionado na migração `20261107000000_quiz_sessions_online`; o feed incremental de conteúdo usa `content_sync_states` e `content_sync_changes`, criados pela migração `20261110000000_add_content_sync_feed`. Como nas migrações anteriores, os nomes físicos das tabelas usam snake_case e as colunas usam camelCase. O DDL abaixo deve ser lido junto com `apps/backend/prisma/schema.prisma`, que é a fonte atual do modelo; não aplicar migrações sem backup e validação prévia.
 
 Este documento especifica a modelagem do banco de dados relacional PostgreSQL do **Bokken Estudos**, as regras de integridade e os índices estratégicos para suportar consultas analíticas, sincronização resiliente e preservação absoluta do histórico.
 
@@ -15,6 +15,8 @@ erDiagram
     User ||--o{ QuestionAttempt : "realiza (histórico)"
     User ||--o{ QuestionSRSProgress : "acumula"
     User ||--o{ DailyStudyLog : "registra"
+    User ||--o| ContentSyncState : "mantém sequência"
+    User ||--o{ ContentSyncChange : "alimenta feed"
 
     Focus ||--o{ Subject : "contém"
     Subject ||--o{ Question : "contém"
@@ -24,6 +26,23 @@ erDiagram
     Question ||--o{ QuestionSRSProgress : "estado SRS"
     QuizSession ||--o{ QuestionAttempt : "agrupa (opcional)"
     QuizSession ||--|{ QuizSessionQuestion : "congela conjunto e ordem"
+
+    ContentSyncState {
+        uuid userId PK, FK
+        bigint lastSequence
+        datetime updatedAt
+    }
+
+    ContentSyncChange {
+        uuid userId PK, FK
+        bigint sequence PK
+        enum entityType
+        enum operation
+        uuid entityId
+        uuid parentId
+        json payload
+        datetime createdAt
+    }
 
     User {
         uuid id PK
@@ -395,9 +414,9 @@ model DailyStudyLog {
 
 ### 3.0. Manifesto imutável do quiz online (Etapa 4)
 - `quiz_session_questions` contém uma linha por pergunta escolhida pelo servidor, com posição, snapshot completo e status (`PENDING`, `ANSWERED`, `SKIPPED`). Perguntas não respondidas continuam no manifesto e são marcadas como puladas quando a sessão é encerrada.
-- A constraint única `(session_id, question_id)` impede repetição na mesma sessão; `(session_id, position)` mantém posições únicas.
+- A constraint única `(sessionId, questionId)` impede repetição na mesma sessão; `(sessionId, position)` mantém posições únicas.
 - A referência à pergunta usa `ON DELETE RESTRICT`; a exclusão de conteúdo é lógica. O snapshot é suficiente para interpretar o contexto mesmo após edição, e a FK mantém o vínculo de auditoria.
-- `question_attempts.idempotency_key` é anulável para compatibilidade com histórico anterior e tem unicidade por usuário. Respostas antigas não recebem chaves artificiais.
+- `question_attempts.idempotencyKey` (coluna física camelCase, como nas migrações anteriores) é anulável para compatibilidade com histórico anterior e tem unicidade por `userId`. Respostas antigas não recebem chaves artificiais.
 - Esta migração é aditiva: nova tabela, enum, coluna anulável e índice. Não altera linhas históricas existentes. Ainda precisa de validação em PostgreSQL descartável; nenhuma migração deve ser executada contra o banco de desenvolvimento nesta tarefa.
 
 ### 3.1. Preservação Absoluta do Histórico (`onDelete: Restrict`)
@@ -421,3 +440,11 @@ model DailyStudyLog {
 ### 3.3. Identificadores de Sessões (`QuizSession`)
 - **Fluxo online atual:** sessões, entradas do manifesto e tentativas recebem UUID no servidor. Uma chave de idempotência fornecida para a submissão impede duplicação por usuário.
 - **Relacionamento histórico:** `QuestionAttempt.quizSessionId` usa `onDelete: SetNull`, preservando tentativas caso uma sessão seja removida. A retenção do manifesto e snapshots da sessão é independente das alterações posteriores de conteúdo.
+
+### 3.4. Feed incremental de conteúdo (Etapa 5.3)
+
+- `ContentSyncState` mantém a última sequência por usuário. `ContentSyncChange` é um log append-only com chave primária `(userId, sequence)`, tipo de entidade/operação, IDs de entidade/pai e payload JSON opcional. Ambas as tabelas têm FK para `users` com `ON DELETE CASCADE`; excluir a conta remove o feed dessa conta.
+- A alteração de conteúdo, o incremento da sequência e a inclusão do evento pertencem à mesma transação PostgreSQL. Atualizações concorrentes da linha de estado serializam a atribuição de sequência por usuário. O endpoint usa um watermark fixo durante as páginas de uma rodada; eventos posteriores ficam para a rodada seguinte.
+- A migração faz backfill dos focos, matérias e perguntas já existentes, incluindo tombstones para conteúdos com `deletedAt`. O backfill escreve apenas nas novas tabelas; não modifica linhas de conteúdo, sessões ou tentativas. Os payloads de pergunta são DTOs de apresentação: incluem todas as alternativas ativas necessárias para renderizar a pergunta, sem indicador de correção, justificativa ou resposta esperada.
+- `ContentSyncChange.payload` é um retrato imutável do evento e não uma relação FK para a entidade editável; isso permite reproduzir alterações e tombstones. O endpoint filtra pelo usuário do JWT. O cursor opaco é autenticado/cifrado e ligado ao `userId`.
+- Não há retenção/compactação nem sincronização de quiz nesta migração. O crescimento do feed deverá ser tratado por política futura de retenção e rebootstrap; a etapa atual não purga eventos.

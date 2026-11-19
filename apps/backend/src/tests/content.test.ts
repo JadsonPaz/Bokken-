@@ -6,7 +6,7 @@ import { QuestionService } from '../services/questionService.js';
 import { InMemoryFocusRepository } from '../repositories/focusRepository.js';
 import { InMemorySubjectRepository } from '../repositories/subjectRepository.js';
 import { InMemoryQuestionRepository } from '../repositories/questionRepository.js';
-import { QuestionType, createQuestionSnapshot, questionAttemptSchema } from '@bokken/shared';
+import { QuestionType, createQuestionSchema, updateQuestionSchema, createQuestionSnapshot, questionAttemptSchema } from '@bokken/shared';
 import { Focus } from '@prisma/client';
 
 // ---- Helper: constrói um objeto Focus compatível com o tipo Prisma ----
@@ -296,6 +296,48 @@ describe('Etapa 3 — Gestão de Conteúdos: Perguntas', () => {
     subjectsStore = [{ id: subjectId, focusId, deletedAt: null }];
     questionRepo = new InMemoryQuestionRepository(subjectsStore, fociStore);
     questionService = new QuestionService(questionRepo);
+  });
+
+  it('rejeita mais de 10 alternativas em payloads externos de criação e atualização', () => {
+    const options = Array.from({ length: 11 }, (_, index) => ({ text: `Alternativa ${index + 1}`, isCorrect: index === 0 }));
+    const common = { subjectId: crypto.randomUUID(), type: QuestionType.MULTIPLE_CHOICE, statement: 'Pergunta com muitas alternativas?' };
+    assert.equal(createQuestionSchema.safeParse({ ...common, options }).success, false);
+    assert.equal(updateQuestionSchema.safeParse({ options }).success, false);
+  });
+
+  it('aceita o limite de 10 alternativas', () => {
+    const options = Array.from({ length: 10 }, (_, index) => ({ text: `Alternativa ${index + 1}`, isCorrect: index === 0 }));
+    assert.equal(createQuestionSchema.safeParse({
+      subjectId: crypto.randomUUID(),
+      type: QuestionType.MULTIPLE_CHOICE,
+      statement: 'Pergunta no limite permitido?',
+      options
+    }).success, true);
+  });
+
+  it('preserva pergunta histórica acima do novo limite ao editar somente o enunciado', async () => {
+    const question = await questionService.createQuestion(USER_A, {
+      subjectId,
+      type: QuestionType.MULTIPLE_CHOICE,
+      statement: 'Pergunta legada com muitas opções?',
+      options: [
+        { text: 'Correta', isCorrect: true },
+        { text: 'Incorreta', isCorrect: false }
+      ]
+    });
+    questionRepo.questions[0].options = Array.from({ length: 11 }, (_, index) => ({
+      id: crypto.randomUUID(),
+      questionId: question.id,
+      text: `Alternativa histórica ${index + 1}`,
+      isCorrect: index === 0,
+      orderIndex: index,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }));
+
+    const updated = await questionService.updateQuestion(question.id, USER_A, { statement: 'Enunciado atualizado.' });
+    assert.equal(updated.statement, 'Enunciado atualizado.');
+    assert.equal(updated.options?.length, 11);
   });
 
   it('13. Deve criar pergunta de múltipla escolha com opções válidas', async () => {

@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import { BookOpen, LogIn, AlertCircle, WifiOff } from 'lucide-react';
 import { ApiError } from '../services/api.js';
+import { getSafeRedirect } from '../utils/safeRedirect.js';
 
 export const LoginPage: React.FC = () => {
   const { login, isOnline } = useAuth();
@@ -14,7 +15,7 @@ export const LoginPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const from = (location.state as any)?.from?.pathname || '/';
+  const from = getSafeRedirect((location.state as { from?: unknown } | null)?.from);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

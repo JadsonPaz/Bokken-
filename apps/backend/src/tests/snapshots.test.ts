@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Question, QuestionType, createQuestionSnapshot, questionSnapshotSchema } from '@bokken/shared';
+import { Question, QuestionType, createQuestionSnapshot, questionSnapshotInputSchema, questionSnapshotSchema } from '@bokken/shared';
 
 const validOption = (text: string, isCorrect: boolean, orderIndex: number, id = crypto.randomUUID()) => ({
   id,
@@ -77,6 +77,24 @@ describe('Snapshots de questões', () => {
 
   it('rejeita helper de múltipla escolha sem opções incluídas', () => {
     assert.throws(() => createQuestionSnapshot(multipleChoice({ options: undefined })));
+  });
+
+  it('limita snapshots recebidos externamente e mantém leitura de snapshots históricos maiores', () => {
+    const base = createQuestionSnapshot(multipleChoice());
+    const expanded = {
+      ...base,
+      options: [
+        ...base.options,
+        ...Array.from({ length: 9 }, (_, index) => ({
+          id: crypto.randomUUID(),
+          text: `Alternativa antiga ${index + 1}`,
+          isCorrect: false,
+          orderIndex: index + 2
+        }))
+      ]
+    };
+    assert.equal(questionSnapshotInputSchema.safeParse(expanded).success, false);
+    assert.equal(questionSnapshotSchema.safeParse(expanded).success, true);
   });
 
   it('rejeita snapshots discursivos sem resposta ou com alternativas', () => {

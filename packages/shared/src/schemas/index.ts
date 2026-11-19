@@ -53,13 +53,18 @@ export const questionOptionSnapshotSchema = z.object({
   orderIndex: z.number().int().nonnegative()
 });
 
-export const questionSnapshotSchema = z.object({
+const questionSnapshotShape = {
   type: z.nativeEnum(QuestionType),
   statement: z.string().trim().min(3),
   explanation: z.string().nullable().optional(),
   expectedAnswer: z.string().nullable().optional(),
-  options: z.array(questionOptionSnapshotSchema)
-}).superRefine((snapshot, ctx) => {
+};
+
+function validateQuestionSnapshot(snapshot: {
+  type: QuestionType;
+  expectedAnswer?: string | null;
+  options: { id: string; orderIndex: number; isCorrect: boolean }[];
+}, ctx: z.RefinementCtx): void {
   if (snapshot.type === QuestionType.MULTIPLE_CHOICE) {
     if (snapshot.options.length < 2) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Snapshots de múltipla escolha exigem pelo menos duas alternativas.', path: ['options'] });
@@ -89,7 +94,19 @@ export const questionSnapshotSchema = z.object({
   if (new Set(optionIds).size !== optionIds.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Os IDs das alternativas devem ser únicos.', path: ['options'] });
   }
-});
+}
+
+// Historical persisted snapshots are parsed without an array cap so old attempts
+// remain readable. External payloads use the bounded schema below.
+export const questionSnapshotSchema = z.object({
+  ...questionSnapshotShape,
+  options: z.array(questionOptionSnapshotSchema)
+}).superRefine(validateQuestionSnapshot);
+
+export const questionSnapshotInputSchema = z.object({
+  ...questionSnapshotShape,
+  options: z.array(questionOptionSnapshotSchema).max(10, 'Uma pergunta pode ter no máximo 10 alternativas.')
+}).superRefine(validateQuestionSnapshot);
 
 export const baseQuestionSchema = z.object({
   subjectId: z.string().uuid('ID de matéria inválido'),
@@ -97,7 +114,7 @@ export const baseQuestionSchema = z.object({
   statement: z.string().trim().min(3, 'O enunciado deve ter no mínimo 3 caracteres'),
   explanation: z.string().max(2000).optional().nullable(),
   expectedAnswer: z.string().max(2000).optional().nullable(),
-  options: z.array(questionOptionSchema).optional()
+  options: z.array(questionOptionSchema).max(10, 'Uma pergunta pode ter no máximo 10 alternativas.').optional()
 });
 
 export const createQuestionSchema = baseQuestionSchema.superRefine((data, ctx) => {
@@ -147,7 +164,7 @@ export const updateQuestionSchema = z.object({
   statement: z.string().trim().min(3, 'O enunciado deve ter no mínimo 3 caracteres').optional(),
   explanation: z.string().max(2000).optional().nullable(),
   expectedAnswer: z.string().max(2000).optional().nullable(),
-  options: z.array(questionOptionSchema).optional()
+  options: z.array(questionOptionSchema).max(10, 'Uma pergunta pode ter no máximo 10 alternativas.').optional()
 }).superRefine((data, ctx) => {
   if (data.type === QuestionType.MULTIPLE_CHOICE && data.options !== undefined) {
     if (data.options.length < 2) {
@@ -230,7 +247,7 @@ export const questionAttemptSchema = z.object({
   statementSnapshot: z.string().optional().nullable(),
   selectedOptionTextSnapshot: z.string().optional().nullable(),
   expectedAnswerSnapshot: z.string().optional().nullable(),
-  questionSnapshot: questionSnapshotSchema,
+  questionSnapshot: questionSnapshotInputSchema,
   clientCreatedAt: z.string().datetime()
 });
 
@@ -257,6 +274,6 @@ export const submitQuizAnswerSchema = z.discriminatedUnion('type', [
 ]);
 
 export const syncPushPayloadSchema = z.object({
-  sessions: z.array(quizSessionSchema),
-  attempts: z.array(questionAttemptSchema)
+  sessions: z.array(quizSessionSchema).max(100, 'Um lote pode conter no máximo 100 sessões.'),
+  attempts: z.array(questionAttemptSchema).max(100, 'Um lote pode conter no máximo 100 tentativas.')
 });

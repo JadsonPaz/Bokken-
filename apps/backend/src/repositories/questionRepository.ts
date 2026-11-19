@@ -2,6 +2,8 @@ import { prisma } from '../db/prisma.js';
 import { Question as PrismaQuestion, QuestionOption as PrismaQuestionOption, QuestionType as PrismaQuestionType } from '@prisma/client';
 import { Question, QuestionOption, QuestionType, PaginatedResponse } from '@bokken/shared';
 import { AppError } from '../utils/errors.js';
+import { ContentSyncEntityType } from '@prisma/client';
+import { recordQuestionUpsert, recordTombstone } from '../services/contentSyncRecorder.js';
 
 export interface CreateQuestionOptionData {
   text: string;
@@ -149,20 +151,12 @@ export class PrismaQuestionRepository implements IQuestionRepository {
   }
 
   async create(data: CreateQuestionData, userId: string): Promise<Question> {
-    // Valida posse da matéria
-    const subject = await prisma.subject.findFirst({
-      where: {
-        id: data.subjectId,
-        deletedAt: null,
-        focus: { userId, deletedAt: null }
-      }
-    });
-
-    if (!subject) {
-      throw new AppError('Matéria não encontrada ou não pertence ao usuário', 404);
-    }
-
     return prisma.$transaction(async (tx) => {
+      const subject = await tx.subject.findFirst({
+        where: { id: data.subjectId, deletedAt: null, focus: { userId, deletedAt: null } }
+      });
+      if (!subject) throw new AppError('Matéria não encontrada ou não pertence ao usuário', 404);
+
       const question = await tx.question.create({
         data: {
           subjectId: data.subjectId,
@@ -190,32 +184,32 @@ export class PrismaQuestionRepository implements IQuestionRepository {
         });
       }
 
+      await recordQuestionUpsert(tx, userId, question, createdOptions);
       return mapPrismaQuestionToShared({ ...question, options: createdOptions });
     });
   }
 
   async update(id: string, userId: string, data: UpdateQuestionData): Promise<Question | null> {
-    // 1. Verifica posse e existência
-    const existing = await prisma.question.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-        subject: {
-          deletedAt: null,
-          focus: { userId, deletedAt: null }
-        }
-      },
-      include: { options: { where: { retiredAt: null } } }
-    });
-
-    if (!existing) return null;
-
     return prisma.$transaction(async (tx) => {
+      const existing = await tx.question.findFirst({
+        where: {
+          id,
+          deletedAt: null,
+          subject: { deletedAt: null, focus: { userId, deletedAt: null } }
+        },
+        include: { options: { where: { retiredAt: null } } }
+      });
+      if (!existing) return null;
+
       const newType = data.type ?? (existing.type as unknown as QuestionType);
 
       // Atualiza campos da questão
-      const updatedQuestion = await tx.question.update({
-        where: { id },
+      const updated = await tx.question.updateMany({
+        where: {
+          id,
+          deletedAt: null,
+          subject: { deletedAt: null, focus: { userId, deletedAt: null } }
+        },
         data: {
           ...(data.type !== undefined && { type: data.type as unknown as PrismaQuestionType }),
           ...(data.statement !== undefined && { statement: data.statement }),
@@ -225,6 +219,7 @@ export class PrismaQuestionRepository implements IQuestionRepository {
             : null
         }
       });
+      if (updated.count === 0) return null;
 
       // Se virou discursiva, remove opções antigas
       if (newType === QuestionType.DISCURSIVE) {
@@ -254,30 +249,43 @@ export class PrismaQuestionRepository implements IQuestionRepository {
         orderBy: { orderIndex: 'asc' }
       });
 
+      const updatedQuestion = await tx.question.findUniqueOrThrow({ where: { id } });
+      await recordQuestionUpsert(tx, userId, updatedQuestion, finalOptions);
       return mapPrismaQuestionToShared({ ...updatedQuestion, options: finalOptions });
     });
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {
-    const question = await prisma.question.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-        subject: {
+    return prisma.$transaction(async (tx) => {
+      const question = await tx.question.findFirst({
+        where: {
+          id,
           deletedAt: null,
-          focus: { userId, deletedAt: null }
+          subject: { deletedAt: null, focus: { userId, deletedAt: null } }
         }
-      }
+      });
+      if (!question) return false;
+
+      const now = new Date();
+      const result = await tx.question.updateMany({
+        where: {
+          id,
+          deletedAt: null,
+          subject: { deletedAt: null, focus: { userId, deletedAt: null } }
+        },
+        data: { deletedAt: now, updatedAt: now }
+      });
+      if (result.count === 0) return false;
+
+      await recordTombstone(tx, {
+        userId,
+        entityType: ContentSyncEntityType.QUESTION,
+        entityId: id,
+        parentId: question.subjectId,
+        deletedAt: now
+      });
+      return true;
     });
-
-    if (!question) return false;
-
-    await prisma.question.update({
-      where: { id },
-      data: { deletedAt: new Date() }
-    });
-
-    return true;
   }
 }
 

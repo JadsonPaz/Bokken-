@@ -14,8 +14,13 @@ export function errorHandler(
     return;
   }
 
+  if (parserError.status === 413 && parserError.type === 'entity.too.large') {
+    res.status(413).json({ error: 'O corpo da requisição excede o limite permitido.' });
+    return;
+  }
+
   if (error instanceof ZodError) {
-    const formattedErrors = error.errors.map(err => ({
+    const formattedErrors = error.issues.map(err => ({
       field: err.path.join('.'),
       message: err.message
     }));
@@ -28,9 +33,7 @@ export function errorHandler(
   }
 
   if (error instanceof AppError) {
-    res.status(error.statusCode).json({
-      error: error.message
-    });
+    res.status(error.statusCode).json({ error: error.message, ...(error.details === undefined ? {} : { details: error.details }) });
     return;
   }
 

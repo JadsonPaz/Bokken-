@@ -1,6 +1,8 @@
 import { prisma } from '../db/prisma.js';
 import { Focus as PrismaFocus } from '@prisma/client';
 import { Focus, FocusWithCount } from '@bokken/shared';
+import { ContentSyncEntityType } from '@prisma/client';
+import { recordFocusUpsert, recordTombstone } from '../services/contentSyncRecorder.js';
 
 export interface CreateFocusData {
   userId: string;
@@ -91,31 +93,36 @@ export class PrismaFocusRepository implements IFocusRepository {
   }
 
   async create(data: CreateFocusData): Promise<Focus> {
-    return serializeFocus(await prisma.focus.create({
-      data: {
-        userId: data.userId,
-        name: data.name,
-        description: data.description,
-        color: data.color || '#1e3a8a'
-      }
-    }));
+    return prisma.$transaction(async (tx) => {
+      const focus = await tx.focus.create({
+        data: {
+          userId: data.userId,
+          name: data.name,
+          description: data.description,
+          color: data.color || '#1e3a8a'
+        }
+      });
+      await recordFocusUpsert(tx, data.userId, focus);
+      return serializeFocus(focus);
+    });
   }
 
   async update(id: string, userId: string, data: UpdateFocusData): Promise<Focus | null> {
-    const focus = await prisma.focus.findFirst({
-      where: { id, userId, deletedAt: null }
+    return prisma.$transaction(async (tx) => {
+      const result = await tx.focus.updateMany({
+        where: { id, userId, deletedAt: null },
+        data: {
+          ...(data.name !== undefined && { name: data.name }),
+          ...(data.description !== undefined && { description: data.description }),
+          ...(data.color !== undefined && { color: data.color })
+        }
+      });
+      if (result.count === 0) return null;
+
+      const focus = await tx.focus.findUniqueOrThrow({ where: { id } });
+      await recordFocusUpsert(tx, userId, focus);
+      return serializeFocus(focus);
     });
-
-    if (!focus) return null;
-
-    return serializeFocus(await prisma.focus.update({
-      where: { id },
-      data: {
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description }),
-        ...(data.color !== undefined && { color: data.color })
-      }
-    }));
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {
@@ -129,10 +136,11 @@ export class PrismaFocusRepository implements IFocusRepository {
       const now = new Date();
 
       // 1. Marca foco como deletado
-      await tx.focus.update({
-        where: { id },
-        data: { deletedAt: now }
+      const focusUpdated = await tx.focus.updateMany({
+        where: { id, userId, deletedAt: null },
+        data: { deletedAt: now, updatedAt: now }
       });
+      if (focusUpdated.count === 0) return false;
 
       // 2. Busca matérias ativas
       const subjects = await tx.subject.findMany({
@@ -143,18 +151,47 @@ export class PrismaFocusRepository implements IFocusRepository {
       const subjectIds = subjects.map(s => s.id);
 
       if (subjectIds.length > 0) {
-        // 3. Marca matérias como deletadas
-        await tx.subject.updateMany({
-          where: { id: { in: subjectIds } },
-          data: { deletedAt: now }
+        const questions = await tx.question.findMany({
+          where: { subjectId: { in: subjectIds }, deletedAt: null },
+          select: { id: true, subjectId: true }
         });
 
-        // 4. Marca perguntas das matérias como deletadas
+        // 3. Marca perguntas e matérias como deletadas
         await tx.question.updateMany({
           where: { subjectId: { in: subjectIds }, deletedAt: null },
-          data: { deletedAt: now }
+          data: { deletedAt: now, updatedAt: now }
         });
+        for (const question of questions) {
+          await recordTombstone(tx, {
+            userId,
+            entityType: ContentSyncEntityType.QUESTION,
+            entityId: question.id,
+            parentId: question.subjectId,
+            deletedAt: now
+          });
+        }
+
+        await tx.subject.updateMany({
+          where: { id: { in: subjectIds }, deletedAt: null },
+          data: { deletedAt: now, updatedAt: now }
+        });
+        for (const subject of subjects) {
+          await recordTombstone(tx, {
+            userId,
+            entityType: ContentSyncEntityType.SUBJECT,
+            entityId: subject.id,
+            parentId: id,
+            deletedAt: now
+          });
+        }
       }
+
+      await recordTombstone(tx, {
+        userId,
+        entityType: ContentSyncEntityType.FOCUS,
+        entityId: id,
+        deletedAt: now
+      });
 
       return true;
     });

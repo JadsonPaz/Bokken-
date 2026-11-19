@@ -141,14 +141,29 @@ export interface QuizSession {
 
 export enum QuizQuestionStatus { PENDING = 'PENDING', ANSWERED = 'ANSWERED', SKIPPED = 'SKIPPED' }
 export type QuizPromptSnapshot = Omit<QuestionSnapshot, 'options'> & { options: Array<Omit<QuestionOptionSnapshot, 'isCorrect'> & { isCorrect?: boolean }> };
+export interface QuizAttemptFeedback {
+  id: string;
+  questionId: string;
+  isCorrect: boolean;
+  selectedOptionId: string | null;
+  selectedOptionTextSnapshot: string | null;
+  discursiveAssessment: DiscursiveAssessment | null;
+  timeSpentSeconds: number;
+  clientCreatedAt: string;
+}
 export interface QuizSessionQuestion {
   id: string; sessionId: string; questionId: string; snapshot: QuizPromptSnapshot; snapshotVersion: number;
   position: number; status: QuizQuestionStatus; answeredAt?: string | null; skippedAt?: string | null;
-  attempt?: QuestionAttempt | null;
+  attempt?: QuizAttemptFeedback | null;
 }
 export interface QuizSessionDetail extends QuizSession {
   questions: QuizSessionQuestion[];
 }
+export interface QuizSessionSummary {
+  totalQuestions: number; totalAnswered: number; totalCorrect: number; totalIncorrect: number; totalSkipped: number; percentageCorrect: number;
+}
+export interface QuizSkipResult { id: string; position: number; status: QuizQuestionStatus; skippedAt: string; }
+export interface QuizAnswerResult { alreadyRecorded: boolean; attempt: QuizAttemptFeedback; snapshot: QuestionSnapshot; }
 export interface CreateQuizSessionInput {
   mode: QuizMode; focusId?: string; subjectId?: string; focusIds?: string[];
   types: QuestionType[]; limit: number | null;

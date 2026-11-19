@@ -2,6 +2,8 @@ import { prisma } from '../db/prisma.js';
 import { Subject as PrismaSubject } from '@prisma/client';
 import { Subject, SubjectWithCount } from '@bokken/shared';
 import { AppError } from '../utils/errors.js';
+import { ContentSyncEntityType } from '@prisma/client';
+import { recordSubjectUpsert, recordTombstone } from '../services/contentSyncRecorder.js';
 
 export interface CreateSubjectData {
   focusId: string;
@@ -87,42 +89,33 @@ export class PrismaSubjectRepository implements ISubjectRepository {
   }
 
   async create(data: CreateSubjectData, userId: string): Promise<Subject> {
-    // Valida que o foco pertence ao usuário autenticado
-    const focus = await prisma.focus.findFirst({
-      where: { id: data.focusId, userId, deletedAt: null }
+    return prisma.$transaction(async (tx) => {
+      const focus = await tx.focus.findFirst({ where: { id: data.focusId, userId, deletedAt: null } });
+      if (!focus) throw new AppError('Foco não encontrado ou não pertence ao usuário', 404);
+
+      const subject = await tx.subject.create({
+        data: { focusId: data.focusId, name: data.name, description: data.description }
+      });
+      await recordSubjectUpsert(tx, userId, subject);
+      return serializeSubject(subject);
     });
-
-    if (!focus) {
-      throw new AppError('Foco não encontrado ou não pertence ao usuário', 404);
-    }
-
-    return serializeSubject(await prisma.subject.create({
-      data: {
-        focusId: data.focusId,
-        name: data.name,
-        description: data.description
-      }
-    }));
   }
 
   async update(id: string, userId: string, data: UpdateSubjectData): Promise<Subject | null> {
-    const subject = await prisma.subject.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-        focus: { userId, deletedAt: null }
-      }
+    return prisma.$transaction(async (tx) => {
+      const result = await tx.subject.updateMany({
+        where: { id, deletedAt: null, focus: { userId, deletedAt: null } },
+        data: {
+          ...(data.name !== undefined && { name: data.name }),
+          ...(data.description !== undefined && { description: data.description })
+        }
+      });
+      if (result.count === 0) return null;
+
+      const subject = await tx.subject.findUniqueOrThrow({ where: { id } });
+      await recordSubjectUpsert(tx, userId, subject);
+      return serializeSubject(subject);
     });
-
-    if (!subject) return null;
-
-    return serializeSubject(await prisma.subject.update({
-      where: { id },
-      data: {
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description })
-      }
-    }));
   }
 
   async softDelete(id: string, userId: string): Promise<boolean> {
@@ -139,16 +132,36 @@ export class PrismaSubjectRepository implements ISubjectRepository {
 
       const now = new Date();
 
-      // 1. Marca matéria como deletada
-      await tx.subject.update({
-        where: { id },
-        data: { deletedAt: now }
+      const questions = await tx.question.findMany({
+        where: { subjectId: id, deletedAt: null },
+        select: { id: true }
       });
+      const deleted = await tx.subject.updateMany({
+        where: { id, deletedAt: null, focus: { userId, deletedAt: null } },
+        data: { deletedAt: now, updatedAt: now }
+      });
+      if (deleted.count === 0) return false;
 
-      // 2. Marca todas as perguntas da matéria como deletadas
       await tx.question.updateMany({
         where: { subjectId: id, deletedAt: null },
-        data: { deletedAt: now }
+        data: { deletedAt: now, updatedAt: now }
+      });
+
+      for (const question of questions) {
+        await recordTombstone(tx, {
+          userId,
+          entityType: ContentSyncEntityType.QUESTION,
+          entityId: question.id,
+          parentId: id,
+          deletedAt: now
+        });
+      }
+      await recordTombstone(tx, {
+        userId,
+        entityType: ContentSyncEntityType.SUBJECT,
+        entityId: id,
+        parentId: subject.focusId,
+        deletedAt: now
       });
 
       return true;

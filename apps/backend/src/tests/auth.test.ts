@@ -1,10 +1,10 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
 import { AuthService } from '../services/authService.js';
 import { InMemoryUserRepository } from '../repositories/userRepository.js';
 import { verifyPassword } from '../utils/password.js';
 import { generateToken, verifyToken } from '../utils/jwt.js';
-import { createApp } from '../server.js';
+import { createApp, server as backendServer } from '../server.js';
 import { AuthController } from '../controllers/authController.js';
 import { createAuthRouter } from '../routes/auth.js';
 import express from 'express';
@@ -18,6 +18,12 @@ describe('Módulo de Autenticação — Bokken Estudos', () => {
   beforeEach(() => {
     userRepository = new InMemoryUserRepository();
     authService = new AuthService(userRepository);
+  });
+
+  after(async () => {
+    if (backendServer.listening) {
+      await new Promise<void>((resolve, reject) => backendServer.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it('exige ambiente explícito e usa configuração JWT isolada por ambiente', () => {
@@ -93,6 +99,12 @@ describe('Módulo de Autenticação — Bokken Estudos', () => {
     // Valida que o hash confere com a senha original
     const isValid = await verifyPassword(plainPassword, userInDb.passwordHash);
     assert.strictEqual(isValid, true, 'Hash bcrypt deve ser verificável');
+  });
+
+  it('verifica hashes $2b$ legados criados pela versão anterior do bcrypt', async () => {
+    const legacyHash = '$2b$12$c19ZyJPXTjDBCCIVZxCCQenzdoVM.RJL3i.2j.2Lq.WWEkx5WrTJG';
+    assert.equal(await verifyPassword('bokken-legacy-password-fixture', legacyHash), true);
+    assert.equal(await verifyPassword('senha incorreta', legacyHash), false);
   });
 
   it('4. Deve realizar login correto com credenciais válidas', async () => {
@@ -196,5 +208,24 @@ describe('Módulo de Autenticação — Bokken Estudos', () => {
     assert.strictEqual(meA.id, userA.user.id);
     assert.strictEqual(meA.email, 'usera@bokken.com');
     assert.notStrictEqual(meA.id, userB.user.id, 'Usuário A nunca deve receber dados do Usuário B');
+  });
+
+  it('limita explicitamente corpos JSON grandes e responde 413', async () => {
+    const app = createApp();
+    const listener = app.listen(0);
+    try {
+      await new Promise<void>(resolve => listener.once('listening', resolve));
+      const address = listener.address();
+      assert.ok(address && typeof address !== 'string');
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'student@example.com', password: 'x'.repeat(110_000) })
+      });
+      assert.equal(response.status, 413);
+      assert.match((await response.json() as { error: string }).error, /limite permitido/);
+    } finally {
+      await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+    }
   });
 });

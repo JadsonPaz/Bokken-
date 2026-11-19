@@ -1,19 +1,23 @@
 # Arquitetura do Bokken Estudos
 
-Este documento descreve a arquitetura implementada e identifica claramente as partes ainda planejadas. Hoje o uso de quiz é online-first; IndexedDB, PWA e sincronização continuam no roadmap da Etapa 5.
+Este documento descreve a arquitetura implementada e identifica claramente as partes ainda planejadas. O quiz e o envio de respostas continuam online-first. Dexie v2 mantém a tabela `session` ativa usada pelo `AuthContext` e stores isoladas por usuário para conteúdo, manifestos, cursor e outbox. A subetapa 5.2 disponibiliza o app shell estático; a 5.3 implementa o pull incremental de conteúdo e sua persistência local. Sessões offline e push da outbox permanecem planejados.
 
 ---
 
 ## 1. Visão Geral da Arquitetura
 
-O Bokken Estudos é um monorepo React/Express. Na Etapa 4, o PostgreSQL é a autoridade para sessões, manifestos e tentativas; o cliente envia somente a resposta e uma chave de idempotência. A arquitetura offline-first é uma evolução planejada, não uma capacidade atual.
+O Bokken Estudos é um monorepo React/Express. Na Etapa 4, o PostgreSQL é a autoridade para sessões, manifestos e tentativas; o cliente envia somente a resposta e uma chave de idempotência. O app shell pode ser recarregado offline depois de instalado; conteúdo, quizzes e operações continuam online. O JWT guardado localmente em IndexedDB não é criptografado e continua acessível ao JavaScript da origem; não deve ser tratado como mecanismo seguro contra XSS.
 
 ```mermaid
 flowchart LR
     UI["React UI"] --> Client["API client / JSON"]
     Client <-->|"HTTP + JWT"| API["Express REST API"]
     API --> Auth["Auth middleware"] --> Controller["Controllers + Zod"] --> Service["Quiz/content services"] --> Prisma["Prisma"] --> DB[("PostgreSQL")]
-    Future["Dexie / PWA / sync\nEtapa 5 planejada"] -. futuro .-> Client
+    Client --> Local["Dexie / IndexedDB\nsessão, conteúdo sincronizado, cursor e outbox"]
+    Shell["PWA / app shell estático\nService Worker"] --> Client
+    API --> Feed["Feed incremental por usuário\nsequência + tombstones"]
+    Feed --> Local
+    Future["Sessões offline e push\nEtapa 5 futura"] -. futuro .-> Local
 ```
 
 ### Princípios Norteadores:
@@ -33,8 +37,8 @@ O projeto é organizado no formato monorepo utilizando workspaces do `npm` ou `p
 ```
 bokken/
 ├── apps/
-│   ├── frontend/                 # Aplicação React + Vite PWA
-│   │   ├── public/               # Ícones, manifest.json, assets estáticos
+│   ├── frontend/                 # Aplicação React + Vite SPA com app shell PWA
+│   │   ├── public/               # Manifest, favicon e ícones PWA
 │   │   ├── src/
 │   │   │   ├── assets/           # Imagens, vetores SVG, estilos globais
 │   │   │   ├── components/       # Componentes visuais
@@ -44,9 +48,8 @@ bokken/
 │   │   │   │   ├── stats/        # ContributionCalendar, PerformanceChart
 │   │   │   │   └── layout/       # Header, Sidebar, Container, SyncStatusPill
 │   │   │   ├── context/          # AuthContext, SyncContext, ThemeContext
-│   │   │   ├── db/               # Dexie.js (banco local)
-│   │   │   │   ├── index.ts      # Instância do BokkenDexieDB
-│   │   │   │   └── schema.ts     # Tabelas e índices do IndexedDB
+│   │   │   ├── db/               # Dexie.js; atualmente somente sessão ativa
+│   │   │   │   └── index.ts      # Store session (perfil/JWT); cache e outbox planejados
 │   │   │   ├── hooks/            # useQuiz, useSync, useOfflineStats, useCardFlip
 │   │   │   ├── pages/            # Home, QuizPage, FocusManager, StatsPage, Login
 │   │   │   ├── services/         # Lógica de domínio e comunicação
@@ -96,6 +99,15 @@ bokken/
 ├── package.json                  # Root package.json (workspaces)
 └── README.md
 ```
+
+### App shell PWA (subetapa 5.2)
+
+- `apps/frontend/public/manifest.webmanifest` e os ícones locais definem a instalação da aplicação.
+- O Service Worker gerado pelo Vite precacheia somente HTML, bundles estáticos, manifest, favicon e ícones. A navegação tenta a rede e usa `/index.html` em caso de falha para suportar rotas da SPA.
+- A estratégia não grava respostas de runtime: ignora caminhos `/api/`, requisições com `Authorization` e recursos que não fazem parte da lista explícita do precache. Não há cache de JWT, credenciais ou dados privados.
+- Uma nova versão recebe um nome de cache derivado do conteúdo. O cache antigo só é removido na ativação; a UI oferece atualização explícita e recarrega após a troca do controller.
+- O registro ocorre somente em build de produção. O modo de desenvolvimento não registra Service Worker.
+- A primeira visita requer rede. Estar offline permite abrir a interface, mas ainda não disponibiliza conteúdo sincronizado, autenticação ou quizzes offline.
 
 ---
 
@@ -149,5 +161,13 @@ Se a validação falhar, a API retorna `404 Not Found` (em vez de `403 Forbidden
 - `clientStudyDate` e `clientTimezone` são derivados pelo servidor do relógio de gravação e do fuso cadastrado no usuário; não vêm no payload.
 - Snapshots pendentes não revelam alternativa correta, justificativa ou resposta esperada; esse conteúdo aparece depois do registro da resposta.
 
-### 3.5. Sincronização futura
-Não existe endpoint `POST /api/sync/push` nesta etapa. Na Etapa 5, identidade deverá continuar sendo derivada do JWT. O manifesto original do servidor deverá ser usado para validar todas as respostas offline; tickets por sessão/questão, idempotência e resolução de replay serão definidos antes da implementação.
+### 3.5. Pull incremental de conteúdo (Etapa 5.3)
+- `GET /api/sync/content?cursor&limit` exige autenticação e deriva a conta exclusivamente do JWT.
+- Cada mudança de foco, matéria ou pergunta e seu evento no feed são gravados na mesma transação. Uma linha de estado serializa sequências por usuário; tombstones de exclusões em cascata são emitidos em ordem de dependência.
+- O cursor opaco usa AES-256-GCM, é ligado ao `userId` e conserva um watermark durante as páginas. Alterações confirmadas depois do watermark são entregues na rodada seguinte.
+- DTOs de sync são separados dos DTOs do CRUD; alternativas contêm ID, texto e ordem, sem `isCorrect`; justificativas e respostas esperadas não são enviadas.
+- O frontend aplica cada página e cursor atomicamente no Dexie, com chaves por usuário, validação de sessão ativa e rejeição de página que parta de cursor obsoleto. A outbox não é lida nem alterada.
+- O endpoint está disponível para uso pela aplicação, mas a UI ainda não inicia o pull automaticamente. Sessões offline continuam indisponíveis.
+
+### 3.6. Push e estudo offline futuros
+Não existe endpoint `POST /api/sync/push` nesta etapa. O manifesto original do servidor deverá ser usado para validar respostas offline; idempotência de pulo, tickets por sessão/questão e resolução de replay serão definidos antes da implementação.

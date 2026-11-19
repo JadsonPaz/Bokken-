@@ -7,8 +7,11 @@ import { focusRouter } from './routes/foci.js';
 import { subjectRouter } from './routes/subjects.js';
 import { questionRouter } from './routes/questions.js';
 import { quizRouter } from './routes/quizzes.js';
+import { syncRouter } from './routes/sync.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { APP_NAME } from '@bokken/shared';
+
+export const API_JSON_BODY_LIMIT = '100kb';
 
 export function createApp() {
   const app = express();
@@ -18,7 +21,7 @@ export function createApp() {
     credentials: true
   }));
 
-  app.use(express.json());
+  app.use(express.json({ limit: API_JSON_BODY_LIMIT }));
 
   // Rotas da API
   app.use('/api', healthRouter);
@@ -29,6 +32,7 @@ export function createApp() {
   app.use('/api/subjects', subjectRouter);
   app.use('/api/questions', questionRouter);
   app.use('/api/quizzes', quizRouter);
+  app.use('/api/sync', syncRouter);
 
   // Middleware de Tratamento Centralizado de Erros
   app.use(errorHandler);

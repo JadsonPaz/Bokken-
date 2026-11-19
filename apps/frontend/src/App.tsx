@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage.js';
 import { FocusPage } from './pages/FocusPage.js';
 import { SubjectPage } from './pages/SubjectPage.js';
 import { QuizPage } from './pages/QuizPage.js';
+import { PwaShellNotice } from './components/pwa/PwaShellNotice.js';
 
 export const App: React.FC = () => {
   return (
@@ -28,6 +29,7 @@ export const App: React.FC = () => {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <PwaShellNotice />
       </AuthProvider>
     </BrowserRouter>
   );

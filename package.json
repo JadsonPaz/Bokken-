@@ -15,7 +15,7 @@
     "build:frontend": "npm run build --workspace=@bokken/frontend",
     "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
     "typecheck": "npm run typecheck --workspaces",
-    "test": "npm run test --workspace=@bokken/backend",
+    "test": "npm run test --workspace=@bokken/backend && npm run test --workspace=@bokken/frontend",
     "lint": "npm run lint --workspaces --if-present"
   },
   "keywords": [

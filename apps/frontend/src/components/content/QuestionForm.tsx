@@ -24,6 +24,8 @@ interface QuestionFormProps {
   loading?: boolean;
 }
 
+const MAX_QUESTION_OPTIONS = 10;
+
 export const QuestionForm: React.FC<QuestionFormProps> = ({
   subjectId,
   initial,
@@ -43,7 +45,9 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
   );
   const [error, setError] = useState('');
 
-  const addOption = () => setOptions(prev => [...prev, { text: '', isCorrect: false }]);
+  const addOption = () => setOptions(prev => prev.length >= MAX_QUESTION_OPTIONS
+    ? prev
+    : [...prev, { text: '', isCorrect: false }]);
 
   const removeOption = (idx: number) => {
     setOptions(prev => prev.filter((_, i) => i !== idx));
@@ -87,13 +91,19 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
       return;
     }
 
+    const optionsUnchanged = Boolean(initial?.options) &&
+      initial!.options!.length === options.length &&
+      initial!.options!.every((option, index) =>
+        option.text === options[index].text && option.isCorrect === options[index].isCorrect
+      );
+
     const data: QuestionFormData = {
       subjectId,
       type,
       statement: statement.trim(),
       explanation: explanation.trim() || undefined,
       ...(type === QuestionType.DISCURSIVE && { expectedAnswer: expectedAnswer.trim() }),
-      ...(type === QuestionType.MULTIPLE_CHOICE && {
+      ...(type === QuestionType.MULTIPLE_CHOICE && !optionsUnchanged && {
         options: options
           .filter(o => o.text.trim().length > 0)
           .map((o, idx) => ({ text: o.text.trim(), isCorrect: o.isCorrect, orderIndex: idx }))
@@ -188,7 +198,7 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
               </div>
             ))}
           </div>
-          {options.length < 6 && (
+          {options.length < MAX_QUESTION_OPTIONS && (
             <button
               type="button"
               onClick={addOption}
